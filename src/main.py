@@ -263,14 +263,32 @@ def search_dropbox(query):
         # First try to find folders containing the query
         folder_results = []
         try:
+            # Search for folders with the query in their name
             folder_search = dbx.files_search_v2(query=f"folder:{query}")
             for match in folder_search.matches:
                 if match.metadata.get(".tag") == "folder":
+                    # Get shared link for the folder
+                    try:
+                        shared_link = dbx.sharing_create_shared_link_with_settings(
+                            path=match.metadata.path_lower,
+                            settings=dropbox.sharing.SharedLinkSettings(
+                                requested_visibility=dropbox.sharing.RequestedVisibility.public,
+                                expires=None,
+                                link_password=None,
+                                audience=dropbox.sharing.LinkAudience.public,
+                                access=dropbox.sharing.RequestedLinkAccessLevel.viewer
+                            )
+                        ).url
+                    except Exception as e:
+                        logger.error(f"Error creating shared link for folder: {e}")
+                        shared_link = None
+
                     folder_results.append({
                         "name": match.metadata.name,
                         "path": match.metadata.path_lower,
                         "modified": match.metadata.server_modified.timestamp(),
-                        "is_folder": True
+                        "is_folder": True,
+                        "shared_link": shared_link
                     })
         except Exception as e:
             logger.error(f"Error searching for folders: {e}")
@@ -390,7 +408,8 @@ def get_ai_response(prompt, context=None):
             When sharing Dropbox links, ALWAYS include the actual file links in your response. Format them like this:
             - [File Name](file_link) (modified: date)
             If you find files in Dropbox, you MUST share the links and explain what each file is.
-            When listing folders, show the folder hierarchy with proper indentation and include last modified dates."""}
+            When listing folders, show the folder hierarchy with proper indentation and include last modified dates.
+            NEVER make up or invent file names, folders, or links. Only show information that actually exists in Dropbox."""}
         ]
         
         if context:
@@ -437,69 +456,48 @@ def get_ai_response(prompt, context=None):
         # Check for Dropbox-related requests
         dropbox_related = any(word in prompt.lower() for word in [
             "file", "document", "link", "folder", "list", "show", "dropbox", 
-            "directory", "folder", "folders", "files", "documents", "contents"
+            "directory", "folder", "folders", "files", "documents", "contents",
+            "brand", "assets", "logo", "image", "material"
         ])
         
         if dropbox_related:
-            # If specifically asking for folders
-            if any(word in prompt.lower() for word in ["folder", "folders", "list", "show"]):
-                # Check if asking for contents of a specific folder
-                if "contents" in prompt.lower() or "inside" in prompt.lower():
-                    # Try to extract folder path from the prompt
-                    folder_path = ""
-                    words = prompt.lower().split()
-                    for i, word in enumerate(words):
-                        if word in ["folder", "contents", "inside"] and i > 0:
-                            folder_path = "/" + " ".join(words[i+1:])
-                            break
-                    
-                    contents = get_folder_contents(path=folder_path)
-                    if contents:
-                        content_info = []
-                        for item in contents:
-                            modified_date = datetime.fromtimestamp(item["modified"]).strftime("%Y-%m-%d %H:%M")
-                            if item["type"] == "folder":
-                                content_info.append(f"- 📁 {item['name']} (modified: {modified_date})")
-                            else:
-                                content_info.append(f"- 📄 [{item['name']}]({item['shared_link']}) (modified: {modified_date})")
-                        
-                        messages.append({
-                            "role": "system",
-                            "content": f"Contents of folder '{folder_path or 'root'}':\n" + "\n".join(content_info)
-                        })
-                else:
-                    # List all folders with hierarchy
-                    folders = list_dropbox_folders()
-                    if folders:
-                        folder_info = []
-                        for folder in folders:
-                            indent = "  " * folder["depth"]
-                            modified_date = datetime.fromtimestamp(folder["modified"]).strftime("%Y-%m-%d %H:%M")
-                            folder_info.append(f"{indent}- 📁 {folder['name']} (modified: {modified_date})")
-                        
-                        messages.append({
-                            "role": "system",
-                            "content": f"Found these folders in Dropbox:\n" + "\n".join(folder_info)
-                        })
+            # Extract search terms from the prompt
+            search_terms = []
+            words = prompt.lower().split()
+            for i, word in enumerate(words):
+                if word in ["folder", "file", "document", "brand", "asset", "logo", "image", "material"]:
+                    if i > 0:
+                        search_terms.append(words[i-1])
+                    if i < len(words) - 1:
+                        search_terms.append(words[i+1])
             
-            # If asking for files
-            else:
-                # Extract potential file name or type
-                file_query = re.sub(r'[^\w\s]', '', prompt.lower())
-                dropbox_results = search_dropbox(file_query)
+            # If we have search terms, use them
+            if search_terms:
+                search_query = " ".join(search_terms)
+                logger.info(f"Searching Dropbox for: {search_query}")
+                dropbox_results = search_dropbox(search_query)
+                
                 if dropbox_results:
-                    # Format the file information for the AI
-                    file_info = []
+                    # Format the results for the AI
+                    result_info = []
                     for item in dropbox_results:
                         modified_date = datetime.fromtimestamp(item["modified"]).strftime("%Y-%m-%d %H:%M")
                         if item["is_folder"]:
-                            file_info.append(f"- 📁 {item['name']} (modified: {modified_date})")
+                            if item["shared_link"]:
+                                result_info.append(f"- 📁 [{item['name']}]({item['shared_link']}) (modified: {modified_date})")
+                            else:
+                                result_info.append(f"- 📁 {item['name']} (modified: {modified_date})")
                         else:
-                            file_info.append(f"- 📄 [{item['name']}]({item['shared_link']}) (modified: {modified_date})")
+                            result_info.append(f"- 📄 [{item['name']}]({item['shared_link']}) (modified: {modified_date})")
                     
                     messages.append({
-                        "role": "system", 
-                        "content": f"Found these files in Dropbox:\n" + "\n".join(file_info)
+                        "role": "system",
+                        "content": f"Found these items in Dropbox:\n" + "\n".join(result_info)
+                    })
+                else:
+                    messages.append({
+                        "role": "system",
+                        "content": "I couldn't find any matching files or folders in Dropbox. Please check if the folder name is correct or try a different search term."
                     })
         
         # Add relevant context to the prompt
