@@ -162,15 +162,89 @@ def read_from_sheet(sheet_name, range_name):
         logger.error(f"Error reading from sheet: {e}")
         return None
 
+def get_client_info(client_name):
+    """Get information about a specific client."""
+    try:
+        data = read_from_sheet("Clients", "A:E")
+        if not data:
+            return None
+            
+        for row in data:
+            if row[0].lower() == client_name.lower():
+                return {
+                    "name": row[0],
+                    "contact": row[1],
+                    "projects": row[2].split(","),
+                    "key_dates": row[3],
+                    "notes": row[4]
+                }
+        return None
+    except Exception as e:
+        logger.error(f"Error getting client info: {e}")
+        return None
+
+def get_project_status(project_name):
+    """Get status of a specific project."""
+    try:
+        data = read_from_sheet("Projects", "A:F")
+        if not data:
+            return None
+            
+        for row in data:
+            if row[0].lower() == project_name.lower():
+                return {
+                    "name": row[0],
+                    "client": row[1],
+                    "status": row[2],
+                    "due_date": row[3],
+                    "team": row[4].split(","),
+                    "notes": row[5]
+                }
+        return None
+    except Exception as e:
+        logger.error(f"Error getting project status: {e}")
+        return None
+
 def get_ai_response(prompt, context=None):
     """Get response from OpenAI API with context."""
     try:
         messages = [
-            {"role": "system", "content": "You are Gilbert AI, a helpful and friendly assistant for a creative agency. You help with client communication, project management, and creative tasks. You have a conversational tone and remember important information from conversations. If you don't know something, say so and offer to help find the answer."}
+            {"role": "system", "content": """You are Gilbert AI, a helpful and friendly assistant for a creative agency. 
+            You help with client communication, project management, and creative tasks. 
+            You have a conversational tone and remember important information from conversations.
+            You have access to client information, project statuses, and important documents.
+            If you don't know something, say so and offer to help find the answer.
+            When discussing clients or projects, provide relevant context from the available information."""}
         ]
         
         if context:
             messages.append({"role": "system", "content": f"Context from previous conversations: {context}"})
+        
+        # Check if the prompt is about a client or project
+        client_info = None
+        project_info = None
+        
+        # Look for client names in the prompt
+        client_data = read_from_sheet("Clients", "A:A")
+        if client_data:
+            for row in client_data:
+                if row[0].lower() in prompt.lower():
+                    client_info = get_client_info(row[0])
+                    break
+        
+        # Look for project names in the prompt
+        project_data = read_from_sheet("Projects", "A:A")
+        if project_data:
+            for row in project_data:
+                if row[0].lower() in prompt.lower():
+                    project_info = get_project_status(row[0])
+                    break
+        
+        # Add relevant context to the prompt
+        if client_info:
+            messages.append({"role": "system", "content": f"Client information: {client_info}"})
+        if project_info:
+            messages.append({"role": "system", "content": f"Project information: {project_info}"})
         
         messages.append({"role": "user", "content": prompt})
         
@@ -199,6 +273,77 @@ def extract_important_info(text):
     except Exception as e:
         logger.error(f"Error extracting important info: {e}")
         return None
+
+def setup_sheets():
+    """Set up the required sheets structure in the Google Spreadsheet."""
+    try:
+        # Define the sheets structure
+        sheets_structure = {
+            "Clients": {
+                "headers": ["Client Name", "Contact Information", "Projects", "Key Dates", "Notes"],
+                "sample_data": [
+                    ["Example Client", "contact@example.com", "Project A, Project B", "Contract Start: 2024-01-01", "Key client notes"]
+                ]
+            },
+            "Projects": {
+                "headers": ["Project Name", "Client", "Status", "Due Date", "Team Members", "Notes"],
+                "sample_data": [
+                    ["Project A", "Example Client", "In Progress", "2024-06-01", "John, Jane", "Project notes"]
+                ]
+            }
+        }
+        
+        # Get existing sheets
+        spreadsheet = service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute()
+        existing_sheets = {sheet['properties']['title'] for sheet in spreadsheet['sheets']}
+        
+        # Create or update each sheet
+        for sheet_name, structure in sheets_structure.items():
+            if sheet_name not in existing_sheets:
+                # Create new sheet
+                body = {
+                    'requests': [{
+                        'addSheet': {
+                            'properties': {
+                                'title': sheet_name
+                            }
+                        }
+                    }]
+                }
+                service.spreadsheets().batchUpdate(
+                    spreadsheetId=SPREADSHEET_ID,
+                    body=body
+                ).execute()
+            
+            # Update headers and sample data
+            range_name = f"{sheet_name}!A1:{chr(65 + len(structure['headers']) - 1)}1"
+            body = {
+                'values': [structure['headers']]
+            }
+            service.spreadsheets().values().update(
+                spreadsheetId=SPREADSHEET_ID,
+                range=range_name,
+                valueInputOption='RAW',
+                body=body
+            ).execute()
+            
+            # Add sample data if sheet is empty
+            range_name = f"{sheet_name}!A2:{chr(65 + len(structure['headers']) - 1)}2"
+            body = {
+                'values': structure['sample_data']
+            }
+            service.spreadsheets().values().update(
+                spreadsheetId=SPREADSHEET_ID,
+                range=range_name,
+                valueInputOption='RAW',
+                body=body
+            ).execute()
+        
+        logger.info("Successfully set up sheets structure")
+        return True
+    except Exception as e:
+        logger.error(f"Error setting up sheets: {e}")
+        return False
 
 # Slack event handlers
 @app.event("message")
