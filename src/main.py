@@ -328,7 +328,8 @@ def get_ai_response(prompt, context=None):
         
         messages.append({"role": "user", "content": prompt})
         
-        response = openai.ChatCompletion.create(
+        client = OpenAI()
+        response = client.chat.completions.create(
             model="gpt-4",
             messages=messages,
             temperature=0.7,
@@ -342,7 +343,8 @@ def get_ai_response(prompt, context=None):
 def extract_important_info(text):
     """Extract important information from text using AI."""
     try:
-        response = openai.ChatCompletion.create(
+        client = OpenAI()
+        response = client.chat.completions.create(
             model="gpt-4",
             messages=[
                 {"role": "system", "content": "Extract important information from the text that should be remembered. Focus on facts, decisions, deadlines, and key details. Return only the important information in a concise format."},
@@ -572,6 +574,11 @@ if __name__ == "__main__":
         logger.info("Starting application...")
         logger.info(f"Python version: {sys.version}")
         logger.info(f"Environment variables: {list(os.environ.keys())}")
+        
+        # Initialize Google Sheets service and set up sheets
+        sheet_service = get_google_sheets_service()
+        if sheet_service:
+            setup_sheets()
         
         # Start the Slack bot in a separate thread
         def run_slack_bot():
