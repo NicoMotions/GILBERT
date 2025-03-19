@@ -235,15 +235,16 @@ def get_dropbox_shared_link(path):
         except Exception as e:
             logger.error(f"Error checking existing shared links: {e}")
         
-        # If no link exists, create a new one
-        shared_link = dbx.sharing_create_shared_link(
+        # If no link exists, create a new one with proper settings
+        shared_link = dbx.sharing_create_shared_link_with_settings(
             path=path,
-            short_url=True,  # Create a shorter URL
-            pending_upload=None,
-            password=None,
-            expires=None,
-            team_member_id=None,
-            remove_expiration=None
+            settings=dropbox.sharing.SharedLinkSettings(
+                requested_visibility=dropbox.sharing.RequestedVisibility.public,
+                expires=None,
+                link_password=None,
+                audience=dropbox.sharing.LinkAudience.public,
+                access=dropbox.sharing.RequestedLinkAccessLevel.viewer
+            )
         )
         
         # Convert the URL to a direct download link
@@ -265,13 +266,17 @@ def search_dropbox(query):
             try:
                 # Get shared link for each file
                 shared_link = get_dropbox_shared_link(match.metadata.path_lower)
-                files.append({
-                    "name": match.metadata.name,
-                    "path": match.metadata.path_lower,
-                    "type": match.metadata.get(".tag", "file"),
-                    "modified": match.metadata.server_modified,
-                    "shared_link": shared_link
-                })
+                if shared_link:  # Only add files that we successfully got a link for
+                    files.append({
+                        "name": match.metadata.name,
+                        "path": match.metadata.path_lower,
+                        "type": match.metadata.get(".tag", "file"),
+                        "modified": match.metadata.server_modified,
+                        "shared_link": shared_link
+                    })
+                    logger.info(f"Successfully created shared link for {match.metadata.name}")
+                else:
+                    logger.warning(f"Could not create shared link for {match.metadata.name}")
             except Exception as e:
                 logger.error(f"Error processing file {match.metadata.name}: {e}")
                 continue
