@@ -120,7 +120,7 @@ def get_ai_response(prompt, context=None):
         
         messages.append({"role": "user", "content": prompt})
         
-        response = openai.ChatCompletion.create(
+        response = openai.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=messages,
             max_tokens=300
@@ -133,7 +133,7 @@ def get_ai_response(prompt, context=None):
 def extract_important_info(text):
     """Extract important information from text using AI."""
     try:
-        response = openai.ChatCompletion.create(
+        response = openai.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "Extract important information from the text that should be remembered. Focus on facts, decisions, deadlines, and key details. Return only the important information in a concise format."},
