@@ -446,17 +446,30 @@ def get_ai_response(prompt, context=None):
             # Extract search terms from the prompt
             search_terms = []
             words = prompt.lower().split()
-            for i, word in enumerate(words):
-                if word in ["folder", "file", "document", "brand", "asset", "logo", "image", "material", "activity", "latest"]:
-                    if i > 0:
-                        search_terms.append(words[i-1])
-                    if i < len(words) - 1:
-                        search_terms.append(words[i+1])
             
-            # If we have search terms, use them
-            if search_terms:
-                search_query = " ".join(search_terms)
-                logger.info(f"Searching Dropbox for: {search_query}")
+            # Check for activity/latest related queries
+            if any(word in prompt.lower() for word in ["activity", "latest", "recent"]):
+                # For activity queries, search for recently modified files
+                search_query = "modified:>2024-01-01"  # Files modified in 2024
+                logger.info(f"Searching Dropbox for recent activity")
+            else:
+                # For other queries, use the context words
+                for i, word in enumerate(words):
+                    if word in ["folder", "file", "document", "brand", "asset", "logo", "image", "material"]:
+                        if i > 0:
+                            search_terms.append(words[i-1])
+                        if i < len(words) - 1:
+                            search_terms.append(words[i+1])
+                
+                # If we have search terms, use them
+                if search_terms:
+                    search_query = " ".join(search_terms)
+                    logger.info(f"Searching Dropbox for: {search_query}")
+                else:
+                    search_query = None
+                    logger.info("No specific search terms found in prompt")
+            
+            if search_query:
                 dropbox_results = search_dropbox(search_query)
                 
                 if dropbox_results:
@@ -483,8 +496,6 @@ def get_ai_response(prompt, context=None):
                         "role": "system",
                         "content": "I couldn't find any matching files or folders in Dropbox. Please check if the folder name is correct or try a different search term."
                     })
-            else:
-                logger.info("No search terms found in prompt")
         
         # Check if the prompt is about a client or project
         client_info = None
@@ -664,24 +675,13 @@ def test_asana_connection():
 def test_dropbox_connection():
     """Test Dropbox connection and return account info."""
     try:
-        # Get account info
+        # Get account info - this is enough to verify connection
         account = dbx.users_get_current_account()
-        space_usage = dbx.users_get_space_usage()
-        
-        # Calculate storage usage
-        used = space_usage.used
-        allocated = space_usage.allocation.allocated
-        usage_percent = (used / allocated) * 100 if allocated > 0 else 0
         
         return {
             "status": "success",
             "account_name": account.name.display_name,
-            "email": account.email,
-            "usage": {
-                "used": used,
-                "allocated": allocated,
-                "percent": usage_percent
-            }
+            "email": account.email
         }
     except Exception as e:
         logger.error(f"Error testing Dropbox connection: {e}")
