@@ -11,12 +11,16 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from openai import OpenAI
-from flask import Flask
+from flask import Flask, jsonify
 import threading
 import sys
 import asana
 import dropbox
 import re
+import openai
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
+import httpx
 
 # Load environment variables
 load_dotenv()
@@ -67,10 +71,7 @@ def run_flask():
         sys.exit(1)
 
 # Initialize OpenAI client
-openai = OpenAI(
-    api_key=os.getenv("OPENAI_API_KEY"),
-    base_url="https://api.openai.com/v1"
-)
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
 # Initialize Slack app with signing secret
 app = App(
@@ -78,51 +79,39 @@ app = App(
     signing_secret=os.environ["SLACK_SIGNING_SECRET"]
 )
 
-# Initialize Asana client
-asana_client = asana.ApiClient(access_token=os.environ.get("ASANA_ACCESS_TOKEN"))
-asana_workspace_id = os.environ.get("ASANA_WORKSPACE_ID")
+# Initialize Google Sheets
+SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
+SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID")
+sheet_service = None
 
 # Initialize Dropbox client
 dbx = dropbox.Dropbox(os.environ.get("DROPBOX_ACCESS_TOKEN"))
 
-# Google Sheets setup
-SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
-SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID")
+# Initialize conversation history
+conversation_history = {}
 
 def get_google_sheets_service():
     """Initialize and return Google Sheets service."""
     try:
-        # For Railway, we'll use the service account JSON directly from environment
-        service_account_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT")
-        if not service_account_json:
-            logger.error("GOOGLE_SERVICE_ACCOUNT environment variable is not set")
-            return None
-            
-        try:
-            import json
-            service_account_info = json.loads(service_account_json)
-            creds = service_account.Credentials.from_service_account_info(
-                service_account_info,
-                scopes=SCOPES
-            )
-        except json.JSONDecodeError as e:
-            logger.error(f"Error parsing service account JSON: {e}")
-            return None
-            
-        service = build('sheets', 'v4', credentials=creds)
+        creds = None
+        if os.path.exists('token.json'):
+            creds = Credentials.from_authorized_user_file('token.json', SCOPES)
         
-        # Test the connection
-        try:
-            service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute()
-            logger.info("Successfully connected to Google Sheets")
-            return service
-        except HttpError as e:
-            logger.error(f"Error testing Google Sheets connection: {e}")
-            return None
-            
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            else:
+                flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+                creds = flow.run_local_server(port=0)
+            with open('token.json', 'w') as token:
+                token.write(creds.to_json())
+        
+        sheet_service = build('sheets', 'v4', credentials=creds)
+        logger.info("Google Sheets API connection established")
+        return sheet_service
     except Exception as e:
-        logger.error(f"Error initializing Google Sheets service: {e}")
-        return None
+        logger.error(f"Error setting up Google Sheets: {e}")
+        raise
 
 def append_to_sheet(sheet_name, values):
     """Append data to specified Google Sheet."""
@@ -363,10 +352,11 @@ def get_ai_response(prompt, context=None):
         
         messages.append({"role": "user", "content": prompt})
         
-        response = openai.chat.completions.create(
-            model="gpt-3.5-turbo",
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
             messages=messages,
-            max_tokens=300
+            temperature=0.7,
+            max_tokens=500
         )
         return response.choices[0].message.content
     except Exception as e:
@@ -376,12 +366,13 @@ def get_ai_response(prompt, context=None):
 def extract_important_info(text):
     """Extract important information from text using AI."""
     try:
-        response = openai.chat.completions.create(
-            model="gpt-3.5-turbo",
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
             messages=[
                 {"role": "system", "content": "Extract important information from the text that should be remembered. Focus on facts, decisions, deadlines, and key details. Return only the important information in a concise format."},
                 {"role": "user", "content": text}
             ],
+            temperature=0.7,
             max_tokens=150
         )
         return response.choices[0].message.content
@@ -409,7 +400,7 @@ def setup_sheets():
         }
         
         # Get existing sheets
-        spreadsheet = service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute()
+        spreadsheet = sheet_service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute()
         existing_sheets = {sheet['properties']['title'] for sheet in spreadsheet['sheets']}
         
         # Create or update each sheet
@@ -425,7 +416,7 @@ def setup_sheets():
                         }
                     }]
                 }
-                service.spreadsheets().batchUpdate(
+                sheet_service.spreadsheets().batchUpdate(
                     spreadsheetId=SPREADSHEET_ID,
                     body=body
                 ).execute()
@@ -435,7 +426,7 @@ def setup_sheets():
             body = {
                 'values': [structure['headers']]
             }
-            service.spreadsheets().values().update(
+            sheet_service.spreadsheets().values().update(
                 spreadsheetId=SPREADSHEET_ID,
                 range=range_name,
                 valueInputOption='RAW',
@@ -447,7 +438,7 @@ def setup_sheets():
             body = {
                 'values': structure['sample_data']
             }
-            service.spreadsheets().values().update(
+            sheet_service.spreadsheets().values().update(
                 spreadsheetId=SPREADSHEET_ID,
                 range=range_name,
                 valueInputOption='RAW',
