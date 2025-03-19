@@ -96,7 +96,7 @@ def get_ai_response(prompt):
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": "You are a helpful assistant for a creative agency. You help with client communication, project management, and creative tasks."},
+                {"role": "system", "content": "You are GILBERT, a helpful assistant for a creative agency. You help with client communication, project management, and creative tasks."},
                 {"role": "user", "content": prompt}
             ],
             max_tokens=150

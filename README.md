@@ -1,4 +1,4 @@
-# Creative Agency Slack Bot
+# GILBERT
 
 A powerful Slack bot for creative agencies that helps manage client communications, onboarding, and file deliveries using Google Sheets as a backend.
 
