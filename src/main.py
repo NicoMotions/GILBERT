@@ -260,64 +260,44 @@ def get_dropbox_shared_link(path):
 def search_dropbox(query):
     """Search for files in Dropbox."""
     try:
-        # First try to get recent files
-        recent_files = []
+        # First try to find folders containing the query
+        folder_results = []
         try:
-            recent = dbx.files_list_folder_get_latest_cursor(path="")
-            while recent.has_more:
-                recent_files.extend(recent.entries)
-                recent = dbx.files_list_folder_continue(cursor=recent.cursor)
-        except Exception as e:
-            logger.error(f"Error getting recent files: {e}")
-
-        # Then perform the search
-        results = dbx.files_search_v2(query)
-        files = []
-        
-        # Process search results
-        for match in results.matches:
-            try:
-                # Get shared link for each file
-                shared_link = get_dropbox_shared_link(match.metadata.path_lower)
-                if shared_link:  # Only add files that we successfully got a link for
-                    files.append({
+            folder_search = dbx.files_search_v2(query=f"folder:{query}")
+            for match in folder_search.matches:
+                if match.metadata.get(".tag") == "folder":
+                    folder_results.append({
                         "name": match.metadata.name,
                         "path": match.metadata.path_lower,
-                        "type": match.metadata.get(".tag", "file"),
-                        "modified": match.metadata.server_modified,
-                        "shared_link": shared_link,
-                        "is_recent": any(rf.path_lower == match.metadata.path_lower for rf in recent_files)
+                        "modified": match.metadata.server_modified.timestamp(),
+                        "is_folder": True
                     })
-                    logger.info(f"Successfully created shared link for {match.metadata.name}")
-                else:
-                    logger.warning(f"Could not create shared link for {match.metadata.name}")
-            except Exception as e:
-                logger.error(f"Error processing file {match.metadata.name}: {e}")
-                continue
+        except Exception as e:
+            logger.error(f"Error searching for folders: {e}")
 
-        # If no search results but we have recent files, check if any match the query
-        if not files and recent_files:
-            query_terms = query.lower().split()
-            for file in recent_files:
-                if any(term in file.name.lower() for term in query_terms):
-                    try:
-                        shared_link = get_dropbox_shared_link(file.path_lower)
-                        if shared_link:
-                            files.append({
-                                "name": file.name,
-                                "path": file.path_lower,
-                                "type": file.get(".tag", "file"),
-                                "modified": file.server_modified,
-                                "shared_link": shared_link,
-                                "is_recent": True
-                            })
-                    except Exception as e:
-                        logger.error(f"Error processing recent file {file.name}: {e}")
-                        continue
+        # Then search for files
+        file_results = []
+        try:
+            file_search = dbx.files_search_v2(query=f"filename:{query}")
+            for match in file_search.matches:
+                if match.metadata.get(".tag") == "file":
+                    shared_link = get_dropbox_shared_link(match.metadata.path_lower)
+                    file_results.append({
+                        "name": match.metadata.name,
+                        "path": match.metadata.path_lower,
+                        "modified": match.metadata.server_modified.timestamp(),
+                        "shared_link": shared_link,
+                        "is_folder": False
+                    })
+        except Exception as e:
+            logger.error(f"Error searching for files: {e}")
 
-        return files
+        # Combine and sort results by modification date
+        all_results = folder_results + file_results
+        all_results.sort(key=lambda x: x["modified"], reverse=True)
+        return all_results
     except Exception as e:
-        logger.error(f"Error searching Dropbox: {e}")
+        logger.error(f"Error in Dropbox search: {e}")
         return []
 
 def list_dropbox_folders(path="", limit=20, depth=0, max_depth=2):
@@ -332,7 +312,7 @@ def list_dropbox_folders(path="", limit=20, depth=0, max_depth=2):
                     folder_info = {
                         "name": entry.name,
                         "path": entry.path_lower,
-                        "modified": entry.server_modified,
+                        "modified": entry.server_modified.timestamp(),
                         "depth": depth
                     }
                     folders.append(folder_info)
@@ -372,8 +352,13 @@ def get_folder_contents(path="", limit=20):
                     "name": entry.name,
                     "path": entry.path_lower,
                     "type": entry.get(".tag", "file"),
-                    "modified": entry.server_modified
+                    "modified": entry.server_modified.timestamp()
                 }
+                
+                # If it's a file, get its shared link
+                if content_info["type"] == "file":
+                    content_info["shared_link"] = get_dropbox_shared_link(entry.path_lower)
+                
                 contents.append(content_info)
                 
                 if len(contents) >= limit:
@@ -476,7 +461,7 @@ def get_ai_response(prompt, context=None):
                             if item["type"] == "folder":
                                 content_info.append(f"- 📁 {item['name']} (modified: {modified_date})")
                             else:
-                                content_info.append(f"- 📄 {item['name']} (modified: {modified_date})")
+                                content_info.append(f"- 📄 [{item['name']}]({item['shared_link']}) (modified: {modified_date})")
                         
                         messages.append({
                             "role": "system",
@@ -505,11 +490,12 @@ def get_ai_response(prompt, context=None):
                 if dropbox_results:
                     # Format the file information for the AI
                     file_info = []
-                    for file in dropbox_results:
-                        modified_date = datetime.fromtimestamp(file["modified"]).strftime("%Y-%m-%d %H:%M")
-                        file_info.append(f"- [{file['name']}]({file['shared_link']}) (modified: {modified_date})")
-                        if file.get("is_recent"):
-                            file_info[-1] += " [Recent]"
+                    for item in dropbox_results:
+                        modified_date = datetime.fromtimestamp(item["modified"]).strftime("%Y-%m-%d %H:%M")
+                        if item["is_folder"]:
+                            file_info.append(f"- 📁 {item['name']} (modified: {modified_date})")
+                        else:
+                            file_info.append(f"- 📄 [{item['name']}]({item['shared_link']}) (modified: {modified_date})")
                     
                     messages.append({
                         "role": "system", 
