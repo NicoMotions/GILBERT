@@ -472,7 +472,12 @@ def test_dropbox_connection():
 def handle_message(event):
     """Handle incoming messages."""
     try:
-        logger.info(f"Received message event: {event}")
+        # Debug logging
+        logger.info(f"DEBUG: Received message event: {event}")
+        logger.info(f"DEBUG: Message text: {event.get('text', '')}")
+        logger.info(f"DEBUG: User ID: {event.get('user')}")
+        logger.info(f"DEBUG: Channel ID: {event.get('channel')}")
+        logger.info(f"DEBUG: Thread TS: {event.get('thread_ts', event.get('ts'))}")
         
         # Get message text and user info
         text = event.get("text", "")
