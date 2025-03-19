@@ -214,7 +214,8 @@ def get_ai_response(prompt, context=None):
             You have a conversational tone and remember important information from conversations.
             You have access to client information, project statuses, and important documents.
             If you don't know something, say so and offer to help find the answer.
-            When discussing clients or projects, provide relevant context from the available information."""}
+            When discussing clients or projects, provide relevant context from the available information.
+            If someone asks about a client or project that isn't in the database yet, explain that you don't have information about it yet and offer to help add it to the database."""}
         ]
         
         if context:
@@ -223,6 +224,8 @@ def get_ai_response(prompt, context=None):
         # Check if the prompt is about a client or project
         client_info = None
         project_info = None
+        unknown_client = None
+        unknown_project = None
         
         # Look for client names in the prompt
         client_data = read_from_sheet("Clients", "A:A")
@@ -231,6 +234,14 @@ def get_ai_response(prompt, context=None):
                 if row[0].lower() in prompt.lower():
                     client_info = get_client_info(row[0])
                     break
+            # If no client found but prompt seems to be about a client
+            if not client_info and any(word in prompt.lower() for word in ["client", "company", "business"]):
+                # Try to extract potential client name from the prompt
+                words = prompt.lower().split()
+                for i, word in enumerate(words):
+                    if word in ["client", "company", "business"] and i > 0:
+                        unknown_client = words[i-1]
+                        break
         
         # Look for project names in the prompt
         project_data = read_from_sheet("Projects", "A:A")
@@ -239,12 +250,26 @@ def get_ai_response(prompt, context=None):
                 if row[0].lower() in prompt.lower():
                     project_info = get_project_status(row[0])
                     break
+            # If no project found but prompt seems to be about a project
+            if not project_info and any(word in prompt.lower() for word in ["project", "campaign", "work"]):
+                # Try to extract potential project name from the prompt
+                words = prompt.lower().split()
+                for i, word in enumerate(words):
+                    if word in ["project", "campaign", "work"] and i > 0:
+                        unknown_project = words[i-1]
+                        break
         
         # Add relevant context to the prompt
         if client_info:
             messages.append({"role": "system", "content": f"Client information: {client_info}"})
         if project_info:
             messages.append({"role": "system", "content": f"Project information: {project_info}"})
+        
+        # Add information about unknown clients/projects
+        if unknown_client:
+            messages.append({"role": "system", "content": f"Note: The client '{unknown_client}' is not in the database yet."})
+        if unknown_project:
+            messages.append({"role": "system", "content": f"Note: The project '{unknown_project}' is not in the database yet."})
         
         messages.append({"role": "user", "content": prompt})
         
