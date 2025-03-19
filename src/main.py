@@ -80,10 +80,10 @@ app = App(
 )
 logger.info("Slack app initialized successfully")
 
-# Get bot's own ID
+# Get bot's own ID and user ID
 bot_info = app.client.auth_test()
-BOT_ID = bot_info["bot_id"]
-logger.info(f"Bot ID: {BOT_ID}")
+BOT_USER_ID = bot_info["user_id"]  # This is the ID we need for mentions
+logger.info(f"Bot User ID: {BOT_USER_ID}")
 
 # Initialize Google Sheets
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
@@ -493,7 +493,7 @@ def handle_message(event):
         logger.info(f"Processing message: text='{text}', user_id='{user_id}', channel_id='{channel_id}'")
         
         # Check if this is a mention or thread reply
-        is_mention = f"<@{BOT_ID}>" in text.lower()
+        is_mention = f"<@{BOT_USER_ID}>" in text.lower()
         is_thread_reply = event.get("thread_ts") is not None
         
         logger.info(f"Message type: mention={is_mention}, thread_reply={is_thread_reply}")
