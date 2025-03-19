@@ -108,28 +108,50 @@ def read_from_sheet(sheet_name, range_name):
         logger.error(f"Error reading from sheet: {e}")
         return None
 
-def get_ai_response(prompt):
-    """Get response from OpenAI API."""
+def get_ai_response(prompt, context=None):
+    """Get response from OpenAI API with context."""
     try:
+        messages = [
+            {"role": "system", "content": "You are GILBERT, a helpful and friendly assistant for a creative agency. You help with client communication, project management, and creative tasks. You have a conversational tone and remember important information from conversations. If you don't know something, say so and offer to help find the answer."}
+        ]
+        
+        if context:
+            messages.append({"role": "system", "content": f"Context from previous conversations: {context}"})
+        
+        messages.append({"role": "user", "content": prompt})
+        
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "You are GILBERT, a helpful assistant for a creative agency. You help with client communication, project management, and creative tasks."},
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens=150
+            messages=messages,
+            max_tokens=300
         )
         return response.choices[0].message.content
     except Exception as e:
         logger.error(f"Error getting AI response: {e}")
         return "I apologize, but I'm having trouble processing that request right now."
 
+def extract_important_info(text):
+    """Extract important information from text using AI."""
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "Extract important information from the text that should be remembered. Focus on facts, decisions, deadlines, and key details. Return only the important information in a concise format."},
+                {"role": "user", "content": text}
+            ],
+            max_tokens=150
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        logger.error(f"Error extracting important info: {e}")
+        return None
+
 # Slack event handlers
 @app.event("message")
 def handle_message_events(body, logger):
     """Handle incoming messages."""
     event = body["event"]
-    text = event.get("text", "").lower()
+    text = event.get("text", "")
     user = event.get("user")
     channel = event.get("channel")
     
@@ -137,8 +159,37 @@ def handle_message_events(body, logger):
     if "bot_id" in event:
         return
     
-    # Handle remember command
-    if "remember" in text:
+    # Check if the message is directed at GILBERT
+    if "<@GILBERT>" in text or "<@gilbert>" in text:
+        # Remove the bot mention from the text
+        clean_text = text.replace("<@GILBERT>", "").replace("<@gilbert>", "").strip()
+        
+        # Get context from previous conversations
+        context_data = read_from_sheet("Memory", "A:C")
+        context = ""
+        if context_data:
+            # Get last 5 relevant memories
+            relevant_memories = [row[2] for row in context_data[-5:]]
+            context = " ".join(relevant_memories)
+        
+        # Get AI response
+        response = get_ai_response(clean_text, context)
+        
+        # Extract and store important information
+        important_info = extract_important_info(clean_text)
+        if important_info:
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            values = [[timestamp, user, important_info]]
+            append_to_sheet("Memory", values)
+        
+        # Send response
+        app.client.chat_postMessage(
+            channel=channel,
+            text=response
+        )
+    
+    # Handle specific commands for backward compatibility
+    elif "remember" in text:
         try:
             info = text.split("remember", 1)[1].strip()
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -160,17 +211,15 @@ def handle_message_events(body, logger):
                 text="Sorry, I encountered an error while trying to remember that."
             )
     
-    # Handle recall command
     elif "recall" in text:
         try:
             topic = text.split("recall", 1)[1].strip()
             data = read_from_sheet("Memory", "A:C")
             if data:
-                # Filter and format relevant memories
                 memories = [row for row in data if topic in row[2].lower()]
                 if memories:
                     response = "Here's what I remember about that:\n"
-                    for memory in memories[-5:]:  # Show last 5 relevant memories
+                    for memory in memories[-5:]:
                         response += f"• {memory[2]} (from {memory[1]} on {memory[0]})\n"
                     app.client.chat_postMessage(
                         channel=channel,
@@ -191,59 +240,6 @@ def handle_message_events(body, logger):
             app.client.chat_postMessage(
                 channel=channel,
                 text="Sorry, I encountered an error while trying to recall that information."
-            )
-    
-    # Handle onboard command
-    elif "onboard" in text:
-        try:
-            client_name = text.split("onboard", 1)[1].strip()
-            # Create onboarding record
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            values = [[timestamp, client_name, "Started", user]]
-            if append_to_sheet("Onboarding", values):
-                app.client.chat_postMessage(
-                    channel=channel,
-                    text=f"Starting onboarding process for {client_name}! 🎉\n"
-                         f"I'll guide you through the necessary steps."
-                )
-                # Send onboarding checklist
-                checklist = [
-                    "1. Send welcome email",
-                    "2. Share project brief template",
-                    "3. Schedule kickoff meeting",
-                    "4. Set up project folder",
-                    "5. Create client portal access"
-                ]
-                app.client.chat_postMessage(
-                    channel=channel,
-                    text="Here's the onboarding checklist:\n" + "\n".join(checklist)
-                )
-            else:
-                app.client.chat_postMessage(
-                    channel=channel,
-                    text="Sorry, I couldn't start the onboarding process. Please try again later."
-                )
-        except Exception as e:
-            logger.error(f"Error in onboard command: {e}")
-            app.client.chat_postMessage(
-                channel=channel,
-                text="Sorry, I encountered an error while trying to start the onboarding process."
-            )
-    
-    # Handle AI chat command
-    elif "ask" in text:
-        try:
-            prompt = text.split("ask", 1)[1].strip()
-            ai_response = get_ai_response(prompt)
-            app.client.chat_postMessage(
-                channel=channel,
-                text=ai_response
-            )
-        except Exception as e:
-            logger.error(f"Error in AI chat: {e}")
-            app.client.chat_postMessage(
-                channel=channel,
-                text="Sorry, I encountered an error while processing your request."
             )
 
 # Initialize the handler for Socket Mode
