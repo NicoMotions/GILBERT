@@ -92,25 +92,36 @@ conversation_history = {}
 def get_google_sheets_service():
     """Initialize and return Google Sheets service."""
     try:
-        creds = None
-        if os.path.exists('token.json'):
-            creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+        # For Railway, we'll use the service account JSON directly from environment
+        service_account_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT")
+        if not service_account_json:
+            logger.error("GOOGLE_SERVICE_ACCOUNT environment variable is not set")
+            return None
+            
+        try:
+            service_account_info = json.loads(service_account_json)
+            creds = service_account.Credentials.from_service_account_info(
+                service_account_info,
+                scopes=SCOPES
+            )
+        except json.JSONDecodeError as e:
+            logger.error(f"Error parsing service account JSON: {e}")
+            return None
+            
+        service = build('sheets', 'v4', credentials=creds)
         
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            else:
-                flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
-                creds = flow.run_local_server(port=0)
-            with open('token.json', 'w') as token:
-                token.write(creds.to_json())
-        
-        sheet_service = build('sheets', 'v4', credentials=creds)
-        logger.info("Google Sheets API connection established")
-        return sheet_service
+        # Test the connection
+        try:
+            service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute()
+            logger.info("Successfully connected to Google Sheets")
+            return service
+        except HttpError as e:
+            logger.error(f"Error testing Google Sheets connection: {e}")
+            return None
+            
     except Exception as e:
-        logger.error(f"Error setting up Google Sheets: {e}")
-        raise
+        logger.error(f"Error initializing Google Sheets service: {e}")
+        return None
 
 def append_to_sheet(sheet_name, values):
     """Append data to specified Google Sheet."""
