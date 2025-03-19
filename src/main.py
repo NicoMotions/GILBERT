@@ -9,7 +9,6 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 import openai
-from slack_bolt.adapter.aws_lambda import SlackRequestHandler
 
 # Load environment variables
 load_dotenv()
@@ -228,10 +227,7 @@ def handle_message_events(body, logger):
                 text="Sorry, I encountered an error while processing your request."
             )
 
-# Initialize the handler for Railway
-handler = SlackRequestHandler(app=app)
-
-# For local development
+# Initialize the handler for Socket Mode
 if __name__ == "__main__":
     handler = SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"])
     handler.start() 
