@@ -296,17 +296,38 @@ def search_dropbox(query):
         # Then search for files
         file_results = []
         try:
-            file_search = dbx.files_search_v2(query=f"filename:{query}")
-            for match in file_search.matches:
-                if match.metadata.get(".tag") == "file":
-                    shared_link = get_dropbox_shared_link(match.metadata.path_lower)
-                    file_results.append({
-                        "name": match.metadata.name,
-                        "path": match.metadata.path_lower,
-                        "modified": match.metadata.server_modified.timestamp(),
-                        "shared_link": shared_link,
-                        "is_folder": False
-                    })
+            # If query is for recent activity, use a different search approach
+            if query == "modified:>2024-01-01":
+                # List recent files instead of searching
+                result = dbx.files_list_folder(path="")
+                while result.entries:
+                    for entry in result.entries:
+                        if entry.server_modified.timestamp() > datetime(2024, 1, 1).timestamp():
+                            shared_link = get_dropbox_shared_link(entry.path_lower)
+                            file_results.append({
+                                "name": entry.name,
+                                "path": entry.path_lower,
+                                "modified": entry.server_modified.timestamp(),
+                                "shared_link": shared_link,
+                                "is_folder": False
+                            })
+                    if result.has_more:
+                        result = dbx.files_list_folder_continue(cursor=result.cursor)
+                    else:
+                        break
+            else:
+                # Regular file search
+                file_search = dbx.files_search_v2(query=f"filename:{query}")
+                for match in file_search.matches:
+                    if match.metadata.get(".tag") == "file":
+                        shared_link = get_dropbox_shared_link(match.metadata.path_lower)
+                        file_results.append({
+                            "name": match.metadata.name,
+                            "path": match.metadata.path_lower,
+                            "modified": match.metadata.server_modified.timestamp(),
+                            "shared_link": shared_link,
+                            "is_folder": False
+                        })
         except Exception as e:
             logger.error(f"Error searching for files: {e}")
 
@@ -494,7 +515,7 @@ def get_ai_response(prompt, context=None):
                     logger.info("No items found in Dropbox")
                     messages.append({
                         "role": "system",
-                        "content": "I couldn't find any matching files or folders in Dropbox. Please check if the folder name is correct or try a different search term."
+                        "content": "I searched Dropbox but couldn't find any matching files or folders. This could mean either no files match your criteria, or there might be an issue with the search permissions. Would you like me to try a different search approach?"
                     })
         
         # Check if the prompt is about a client or project
