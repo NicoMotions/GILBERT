@@ -286,7 +286,7 @@ def search_dropbox(query):
                     folder_results.append({
                         "name": match.metadata.name,
                         "path": match.metadata.path_lower,
-                        "modified": match.metadata.server_modified.timestamp(),
+                        "modified": getattr(match.metadata, 'server_modified', None),
                         "is_folder": True,
                         "shared_link": shared_link
                     })
@@ -302,15 +302,17 @@ def search_dropbox(query):
                 result = dbx.files_list_folder(path="")
                 while result.entries:
                     for entry in result.entries:
-                        if entry.server_modified.timestamp() > datetime(2024, 1, 1).timestamp():
-                            shared_link = get_dropbox_shared_link(entry.path_lower)
-                            file_results.append({
-                                "name": entry.name,
-                                "path": entry.path_lower,
-                                "modified": entry.server_modified.timestamp(),
-                                "shared_link": shared_link,
-                                "is_folder": False
-                            })
+                        if entry.get(".tag") == "file":
+                            if hasattr(entry, 'server_modified'):
+                                if entry.server_modified.timestamp() > datetime(2024, 1, 1).timestamp():
+                                    shared_link = get_dropbox_shared_link(entry.path_lower)
+                                    file_results.append({
+                                        "name": entry.name,
+                                        "path": entry.path_lower,
+                                        "modified": entry.server_modified.timestamp(),
+                                        "shared_link": shared_link,
+                                        "is_folder": False
+                                    })
                     if result.has_more:
                         result = dbx.files_list_folder_continue(cursor=result.cursor)
                     else:
@@ -333,7 +335,7 @@ def search_dropbox(query):
 
         # Combine and sort results by modification date
         all_results = folder_results + file_results
-        all_results.sort(key=lambda x: x["modified"], reverse=True)
+        all_results.sort(key=lambda x: x["modified"] if x["modified"] else 0, reverse=True)
         return all_results
     except Exception as e:
         logger.error(f"Error in Dropbox search: {e}")
@@ -753,9 +755,7 @@ def handle_message(event):
             logger.info("Testing Dropbox connection...")
             test_result = test_dropbox_connection()
             if test_result["status"] == "success":
-                used_gb = round(test_result["usage"]["used"] / (1024**3), 2)
-                total_gb = round(test_result["usage"]["allocated"] / (1024**3), 2)
-                response = f"✅ Dropbox connection successful!\nAccount: {test_result['account_name']}\nEmail: {test_result['email']}\nStorage: {used_gb}GB used of {total_gb}GB ({test_result['usage']['percent']:.1f}%)"
+                response = f"✅ Dropbox connection successful!\nAccount: {test_result['account_name']}\nEmail: {test_result['email']}"
             else:
                 response = f"❌ Dropbox connection failed: {test_result['message']}"
             logger.info(f"Sending response: {response}")
