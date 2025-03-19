@@ -27,11 +27,24 @@ flask_app = Flask(__name__)
 def health_check():
     """Health check endpoint."""
     try:
-        # Basic health check - just return OK
-        return 'OK', 200
+        # Check if required environment variables are present
+        required_vars = ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_SIGNING_SECRET", "OPENAI_API_KEY", "SPREADSHEET_ID"]
+        missing_vars = [var for var in required_vars if not os.environ.get(var)]
+        
+        if missing_vars:
+            logger.error(f"Missing required environment variables: {missing_vars}")
+            return {'status': 'error', 'missing_vars': missing_vars}, 500
+            
+        # Test Google Sheets connection
+        service = get_google_sheets_service()
+        if not service:
+            logger.error("Failed to connect to Google Sheets")
+            return {'status': 'error', 'message': 'Google Sheets connection failed'}, 500
+            
+        return {'status': 'healthy', 'timestamp': datetime.now().isoformat()}, 200
     except Exception as e:
         logger.error(f"Health check error: {e}")
-        return 'Error', 500
+        return {'status': 'error', 'message': str(e)}, 500
 
 def run_flask():
     """Run Flask server."""
@@ -68,32 +81,20 @@ def get_google_sheets_service():
     try:
         # For Railway, we'll use the service account JSON directly from environment
         service_account_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT")
-        if service_account_json:
-            try:
-                import json
-                service_account_info = json.loads(service_account_json)
-                creds = service_account.Credentials.from_service_account_info(
-                    service_account_info,
-                    scopes=SCOPES
-                )
-            except json.JSONDecodeError as e:
-                logger.error(f"Error parsing service account JSON: {e}")
-                return None
-        else:
-            # Fallback to file-based credentials
-            credentials_path = os.environ.get("GOOGLE_SHEETS_CREDENTIALS_PATH")
-            if not credentials_path:
-                logger.error("No Google Sheets credentials found in environment")
-                return None
-                
-            if not os.path.exists(credentials_path):
-                logger.error(f"Credentials file not found at: {credentials_path}")
-                return None
-                
-            creds = service_account.Credentials.from_service_account_file(
-                credentials_path,
+        if not service_account_json:
+            logger.error("GOOGLE_SERVICE_ACCOUNT environment variable is not set")
+            return None
+            
+        try:
+            import json
+            service_account_info = json.loads(service_account_json)
+            creds = service_account.Credentials.from_service_account_info(
+                service_account_info,
                 scopes=SCOPES
             )
+        except json.JSONDecodeError as e:
+            logger.error(f"Error parsing service account JSON: {e}")
+            return None
             
         service = build('sheets', 'v4', credentials=creds)
         
@@ -314,6 +315,11 @@ def handle_message_events(body, logger):
 # Initialize the handler for Socket Mode
 if __name__ == "__main__":
     try:
+        # Log startup information
+        logger.info("Starting application...")
+        logger.info(f"Python version: {sys.version}")
+        logger.info(f"Environment variables: {list(os.environ.keys())}")
+        
         # Start the Slack bot in a separate thread
         def run_slack_bot():
             try:

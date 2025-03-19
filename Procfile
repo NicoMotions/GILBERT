@@ -1,1 +1,1 @@
-web: PYTHONUNBUFFERED=1 python3 src/main.py 
+web: PYTHONUNBUFFERED=1 PYTHONPATH=/app python3 src/main.py 
