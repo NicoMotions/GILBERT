@@ -260,13 +260,62 @@ def get_dropbox_shared_link(path):
 def search_dropbox(query):
     """Search for files in Dropbox."""
     try:
-        # First try to find folders containing the query
+        # If query is for recent activity, use a different approach
+        if query == "modified:>2024-01-01":
+            logger.info("Fetching recent activity from Dropbox")
+            results = []
+            # List recent files from root
+            result = dbx.files_list_folder(path="")
+            while result.entries:
+                for entry in result.entries:
+                    if hasattr(entry, '_tag'):
+                        if entry._tag == "file":
+                            if hasattr(entry, 'server_modified'):
+                                if entry.server_modified.timestamp() > datetime(2024, 1, 1).timestamp():
+                                    shared_link = get_dropbox_shared_link(entry.path_lower)
+                                    results.append({
+                                        "name": entry.name,
+                                        "path": entry.path_lower,
+                                        "modified": entry.server_modified.timestamp(),
+                                        "shared_link": shared_link,
+                                        "is_folder": False
+                                    })
+                        elif entry._tag == "folder":
+                            # For folders, get their contents
+                            try:
+                                folder_contents = dbx.files_list_folder(path=entry.path_lower)
+                                for content in folder_contents.entries:
+                                    if hasattr(content, '_tag') and content._tag == "file":
+                                        if hasattr(content, 'server_modified'):
+                                            if content.server_modified.timestamp() > datetime(2024, 1, 1).timestamp():
+                                                shared_link = get_dropbox_shared_link(content.path_lower)
+                                                results.append({
+                                                    "name": f"{entry.name}/{content.name}",
+                                                    "path": content.path_lower,
+                                                    "modified": content.server_modified.timestamp(),
+                                                    "shared_link": shared_link,
+                                                    "is_folder": False
+                                                })
+                            except Exception as e:
+                                logger.error(f"Error listing folder contents: {e}")
+                                continue
+                
+                if result.has_more:
+                    result = dbx.files_list_folder_continue(cursor=result.cursor)
+                else:
+                    break
+            
+            # Sort results by modification date
+            results.sort(key=lambda x: x["modified"], reverse=True)
+            return results
+
+        # For regular searches, continue with existing search logic
         folder_results = []
         try:
             # Search for folders with the query in their name
             folder_search = dbx.files_search_v2(query=f"folder:{query}")
             for match in folder_search.matches:
-                if match.metadata.get(".tag") == "folder":
+                if hasattr(match.metadata, '_tag') and match.metadata._tag == "folder":
                     # Get shared link for the folder
                     try:
                         shared_link = dbx.sharing_create_shared_link_with_settings(
@@ -296,40 +345,18 @@ def search_dropbox(query):
         # Then search for files
         file_results = []
         try:
-            # If query is for recent activity, use a different search approach
-            if query == "modified:>2024-01-01":
-                # List recent files instead of searching
-                result = dbx.files_list_folder(path="")
-                while result.entries:
-                    for entry in result.entries:
-                        if entry.get(".tag") == "file":
-                            if hasattr(entry, 'server_modified'):
-                                if entry.server_modified.timestamp() > datetime(2024, 1, 1).timestamp():
-                                    shared_link = get_dropbox_shared_link(entry.path_lower)
-                                    file_results.append({
-                                        "name": entry.name,
-                                        "path": entry.path_lower,
-                                        "modified": entry.server_modified.timestamp(),
-                                        "shared_link": shared_link,
-                                        "is_folder": False
-                                    })
-                    if result.has_more:
-                        result = dbx.files_list_folder_continue(cursor=result.cursor)
-                    else:
-                        break
-            else:
-                # Regular file search
-                file_search = dbx.files_search_v2(query=f"filename:{query}")
-                for match in file_search.matches:
-                    if match.metadata.get(".tag") == "file":
-                        shared_link = get_dropbox_shared_link(match.metadata.path_lower)
-                        file_results.append({
-                            "name": match.metadata.name,
-                            "path": match.metadata.path_lower,
-                            "modified": match.metadata.server_modified.timestamp(),
-                            "shared_link": shared_link,
-                            "is_folder": False
-                        })
+            # Regular file search
+            file_search = dbx.files_search_v2(query=f"filename:{query}")
+            for match in file_search.matches:
+                if hasattr(match.metadata, '_tag') and match.metadata._tag == "file":
+                    shared_link = get_dropbox_shared_link(match.metadata.path_lower)
+                    file_results.append({
+                        "name": match.metadata.name,
+                        "path": match.metadata.path_lower,
+                        "modified": match.metadata.server_modified.timestamp(),
+                        "shared_link": shared_link,
+                        "is_folder": False
+                    })
         except Exception as e:
             logger.error(f"Error searching for files: {e}")
 
