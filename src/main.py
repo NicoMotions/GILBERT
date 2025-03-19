@@ -470,25 +470,34 @@ def test_dropbox_connection():
 def handle_message(event):
     """Handle incoming messages."""
     try:
+        logger.info(f"Received message event: {event}")
+        
         # Get message text and user info
         text = event.get("text", "")
         user_id = event.get("user")
         channel_id = event.get("channel")
         thread_ts = event.get("thread_ts", event.get("ts"))
         
+        logger.info(f"Processing message: text='{text}', user_id='{user_id}', channel_id='{channel_id}'")
+        
         # Check if this is a mention or thread reply
         is_mention = any(mention in text.lower() for mention in ["<@gilbert ai>", "<@gilbertai>"])
         is_thread_reply = event.get("thread_ts") is not None
         
+        logger.info(f"Message type: mention={is_mention}, thread_reply={is_thread_reply}")
+        
         if not (is_mention or is_thread_reply):
+            logger.info("Ignoring message - not a mention or thread reply")
             return
             
         # Get user info
         user_info = app.client.users_info(user=user_id)
         user_name = user_info["user"]["real_name"]
+        logger.info(f"User info retrieved: {user_name}")
         
         # Test Dropbox connection if requested
         if "test dropbox" in text.lower():
+            logger.info("Testing Dropbox connection...")
             test_result = test_dropbox_connection()
             if test_result["status"] == "success":
                 used_gb = round(test_result["used_space"] / (1024**3), 2)
@@ -496,66 +505,51 @@ def handle_message(event):
                 response = f"✅ Dropbox connection successful!\nAccount: {test_result['account_name']}\nEmail: {test_result['email']}\nStorage: {used_gb}GB used of {total_gb}GB"
             else:
                 response = f"❌ Dropbox connection failed: {test_result['message']}"
+            logger.info(f"Sending response: {response}")
             app.client.chat_postMessage(
                 channel=channel_id,
                 text=response,
                 thread_ts=thread_ts
             )
             return
-        
-        # Get thread context if this is a reply
-        thread_context = ""
-        if is_thread_reply:
-            thread_messages = app.client.conversations_replies(channel=channel_id, ts=thread_ts)
-            if thread_messages["messages"]:
-                # Get the original message and Gilbert's response
-                original_message = thread_messages["messages"][0]["text"]
-                gilbert_response = None
-                for msg in thread_messages["messages"][1:]:
-                    if msg.get("bot_id") or msg.get("subtype") == "bot_message":
-                        gilbert_response = msg["text"]
-                        break
-                
-                if gilbert_response:
-                    thread_context = f"Original message: {original_message}\nGilbert's response: {gilbert_response}"
-        
-        # Get context from previous conversations
-        context = ""
-        context_data = read_from_sheet("Memory", "A:C")
-        if context_data:
-            # Get last 5 relevant memories
-            relevant_memories = [row[2] for row in context_data[-5:]]
-            context = " ".join(relevant_memories)
-            logger.info(f"Context from previous conversations: {context}")
+            
+        # Get conversation history
+        history_key = f"{user_id}_{channel_id}"
+        history = conversation_history.get(history_key, [])
+        logger.info(f"Retrieved conversation history for {history_key}")
         
         # Get AI response
-        response = get_ai_response(text, context)
-        logger.info(f"AI response: {response}")
+        logger.info("Getting AI response...")
+        response = get_ai_response(text, history)
+        logger.info(f"AI response received: {response[:100]}...")  # Log first 100 chars
         
-        # Extract and store important information
-        important_info = extract_important_info(text)
-        if important_info and SPREADSHEET_ID:  # Only try to store if we have a spreadsheet ID
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            values = [[timestamp, user_id, important_info]]
-            append_to_sheet("Memory", values)
-            logger.info(f"Stored important info: {important_info}")
+        # Update conversation history
+        history.append({"role": "user", "content": text})
+        history.append({"role": "assistant", "content": response})
+        if len(history) > 10:  # Keep last 5 exchanges (10 messages)
+            history = history[-10:]
+        conversation_history[history_key] = history
+        logger.info("Updated conversation history")
         
-        # Send response in thread if it's a thread reply, otherwise as a new message
-        if thread_ts:
+        # Send response
+        logger.info("Sending response to Slack...")
+        app.client.chat_postMessage(
+            channel=channel_id,
+            text=response,
+            thread_ts=thread_ts
+        )
+        logger.info("Response sent successfully")
+        
+    except Exception as e:
+        logger.error(f"Error handling message: {e}", exc_info=True)
+        try:
             app.client.chat_postMessage(
                 channel=channel_id,
-                text=response,
+                text="I apologize, but I encountered an error processing your request. Please try again later.",
                 thread_ts=thread_ts
             )
-        else:
-            app.client.chat_postMessage(
-                channel=channel_id,
-                text=response
-            )
-        logger.info("Response sent successfully")
-    
-    except Exception as e:
-        logger.error(f"Error handling message: {e}")
+        except Exception as send_error:
+            logger.error(f"Error sending error message: {send_error}", exc_info=True)
 
 # Initialize the handler for Socket Mode
 if __name__ == "__main__":
