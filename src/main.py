@@ -155,14 +155,26 @@ def handle_message_events(body, logger):
     user = event.get("user")
     channel = event.get("channel")
     
+    # Log the received message
+    logger.info(f"Received message: {text}")
+    
     # Ignore bot messages
     if "bot_id" in event:
+        logger.info("Ignoring bot message")
         return
+    
+    # Log mention checks
+    logger.info(f"Checking for mentions in: {text}")
+    logger.info(f"Contains <@Gilbert AI>: {'<@Gilbert AI>' in text}")
+    logger.info(f"Contains <@gilbert ai>: {'<@gilbert ai>' in text}")
+    logger.info(f"Contains <@GilbertAI>: {'<@GilbertAI>' in text}")
     
     # Check if the message is directed at Gilbert AI
     if "<@Gilbert AI>" in text or "<@gilbert ai>" in text or "<@GilbertAI>" in text:
+        logger.info("Gilbert AI mention detected!")
         # Remove the bot mention from the text
         clean_text = text.replace("<@Gilbert AI>", "").replace("<@gilbert ai>", "").replace("<@GilbertAI>", "").strip()
+        logger.info(f"Cleaned text: {clean_text}")
         
         # Get context from previous conversations
         context_data = read_from_sheet("Memory", "A:C")
@@ -171,9 +183,11 @@ def handle_message_events(body, logger):
             # Get last 5 relevant memories
             relevant_memories = [row[2] for row in context_data[-5:]]
             context = " ".join(relevant_memories)
+            logger.info(f"Context from previous conversations: {context}")
         
         # Get AI response
         response = get_ai_response(clean_text, context)
+        logger.info(f"AI response: {response}")
         
         # Extract and store important information
         important_info = extract_important_info(clean_text)
@@ -181,12 +195,14 @@ def handle_message_events(body, logger):
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             values = [[timestamp, user, important_info]]
             append_to_sheet("Memory", values)
+            logger.info(f"Stored important info: {important_info}")
         
         # Send response
         app.client.chat_postMessage(
             channel=channel,
             text=response
         )
+        logger.info("Response sent successfully")
     
     # Handle specific commands for backward compatibility
     elif "remember" in text:
