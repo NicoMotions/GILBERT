@@ -320,20 +320,33 @@ def search_dropbox(query):
         logger.error(f"Error searching Dropbox: {e}")
         return []
 
-def list_dropbox_folders(limit=20):
-    """List folders in Dropbox."""
+def list_dropbox_folders(path="", limit=20, depth=0, max_depth=2):
+    """List folders in Dropbox, including subfolders up to a certain depth."""
     try:
         folders = []
-        result = dbx.files_list_folder(path="")
+        result = dbx.files_list_folder(path=path)
         
         while result.entries and len(folders) < limit:
             for entry in result.entries:
                 if entry.get(".tag") == "folder":
-                    folders.append({
+                    folder_info = {
                         "name": entry.name,
                         "path": entry.path_lower,
-                        "modified": entry.server_modified
-                    })
+                        "modified": entry.server_modified,
+                        "depth": depth
+                    }
+                    folders.append(folder_info)
+                    
+                    # Recursively get subfolders if we haven't reached max depth
+                    if depth < max_depth:
+                        subfolders = list_dropbox_folders(
+                            path=entry.path_lower,
+                            limit=limit - len(folders),
+                            depth=depth + 1,
+                            max_depth=max_depth
+                        )
+                        folders.extend(subfolders)
+                    
                     if len(folders) >= limit:
                         break
             
@@ -345,6 +358,35 @@ def list_dropbox_folders(limit=20):
         return folders
     except Exception as e:
         logger.error(f"Error listing Dropbox folders: {e}")
+        return []
+
+def get_folder_contents(path="", limit=20):
+    """Get contents of a specific folder, including both files and subfolders."""
+    try:
+        contents = []
+        result = dbx.files_list_folder(path=path)
+        
+        while result.entries and len(contents) < limit:
+            for entry in result.entries:
+                content_info = {
+                    "name": entry.name,
+                    "path": entry.path_lower,
+                    "type": entry.get(".tag", "file"),
+                    "modified": entry.server_modified
+                }
+                contents.append(content_info)
+                
+                if len(contents) >= limit:
+                    break
+            
+            if result.has_more and len(contents) < limit:
+                result = dbx.files_list_folder_continue(cursor=result.cursor)
+            else:
+                break
+                
+        return contents
+    except Exception as e:
+        logger.error(f"Error getting folder contents: {e}")
         return []
 
 def get_ai_response(prompt, context=None):
@@ -363,7 +405,7 @@ def get_ai_response(prompt, context=None):
             When sharing Dropbox links, ALWAYS include the actual file links in your response. Format them like this:
             - [File Name](file_link) (modified: date)
             If you find files in Dropbox, you MUST share the links and explain what each file is.
-            When listing folders, show the folder names and their last modified dates."""}
+            When listing folders, show the folder hierarchy with proper indentation and include last modified dates."""}
         ]
         
         if context:
@@ -410,23 +452,50 @@ def get_ai_response(prompt, context=None):
         # Check for Dropbox-related requests
         dropbox_related = any(word in prompt.lower() for word in [
             "file", "document", "link", "folder", "list", "show", "dropbox", 
-            "directory", "folder", "folders", "files", "documents"
+            "directory", "folder", "folders", "files", "documents", "contents"
         ])
         
         if dropbox_related:
             # If specifically asking for folders
             if any(word in prompt.lower() for word in ["folder", "folders", "list", "show"]):
-                folders = list_dropbox_folders()
-                if folders:
-                    folder_info = []
-                    for folder in folders:
-                        modified_date = datetime.fromtimestamp(folder["modified"]).strftime("%Y-%m-%d %H:%M")
-                        folder_info.append(f"- {folder['name']} (modified: {modified_date})")
+                # Check if asking for contents of a specific folder
+                if "contents" in prompt.lower() or "inside" in prompt.lower():
+                    # Try to extract folder path from the prompt
+                    folder_path = ""
+                    words = prompt.lower().split()
+                    for i, word in enumerate(words):
+                        if word in ["folder", "contents", "inside"] and i > 0:
+                            folder_path = "/" + " ".join(words[i+1:])
+                            break
                     
-                    messages.append({
-                        "role": "system",
-                        "content": f"Found these folders in Dropbox:\n" + "\n".join(folder_info)
-                    })
+                    contents = get_folder_contents(path=folder_path)
+                    if contents:
+                        content_info = []
+                        for item in contents:
+                            modified_date = datetime.fromtimestamp(item["modified"]).strftime("%Y-%m-%d %H:%M")
+                            if item["type"] == "folder":
+                                content_info.append(f"- 📁 {item['name']} (modified: {modified_date})")
+                            else:
+                                content_info.append(f"- 📄 {item['name']} (modified: {modified_date})")
+                        
+                        messages.append({
+                            "role": "system",
+                            "content": f"Contents of folder '{folder_path or 'root'}':\n" + "\n".join(content_info)
+                        })
+                else:
+                    # List all folders with hierarchy
+                    folders = list_dropbox_folders()
+                    if folders:
+                        folder_info = []
+                        for folder in folders:
+                            indent = "  " * folder["depth"]
+                            modified_date = datetime.fromtimestamp(folder["modified"]).strftime("%Y-%m-%d %H:%M")
+                            folder_info.append(f"{indent}- 📁 {folder['name']} (modified: {modified_date})")
+                        
+                        messages.append({
+                            "role": "system",
+                            "content": f"Found these folders in Dropbox:\n" + "\n".join(folder_info)
+                        })
             
             # If asking for files
             else:
