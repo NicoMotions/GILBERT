@@ -275,14 +275,29 @@ def handle_message_events(body, logger):
 # Initialize the handler for Socket Mode
 if __name__ == "__main__":
     try:
-        # Start the Flask server in a separate thread
-        flask_thread = threading.Thread(target=run_flask, daemon=True)
-        flask_thread.start()
+        # Start the Slack bot in a separate thread
+        def run_slack_bot():
+            try:
+                logger.info("Starting Slack bot...")
+                handler = SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"])
+                handler.start()
+            except Exception as e:
+                logger.error(f"Slack bot error: {e}")
+                sys.exit(1)
+
+        # Start Slack bot in a separate thread
+        slack_thread = threading.Thread(target=run_slack_bot, daemon=True)
+        slack_thread.start()
         
-        # Start the Slack bot
-        logger.info("Starting Slack bot...")
-        handler = SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"])
-        handler.start()
+        # Run Flask as the main process
+        port = int(os.environ.get('PORT', 8080))
+        logger.info(f"Starting Flask server on port {port}")
+        flask_app.run(
+            host='0.0.0.0',
+            port=port,
+            debug=False,
+            use_reloader=False
+        )
     except Exception as e:
         logger.error(f"Application error: {e}")
         sys.exit(1) 
