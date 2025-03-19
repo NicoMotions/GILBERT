@@ -168,12 +168,13 @@ def handle_message_events(body, logger):
     logger.info(f"Contains <@Gilbert AI>: {'<@Gilbert AI>' in text}")
     logger.info(f"Contains <@gilbert ai>: {'<@gilbert ai>' in text}")
     logger.info(f"Contains <@GilbertAI>: {'<@GilbertAI>' in text}")
+    logger.info(f"Contains <@U08HPP8UD6Z>: {'<@U08HPP8UD6Z>' in text}")
     
     # Check if the message is directed at Gilbert AI
-    if "<@Gilbert AI>" in text or "<@gilbert ai>" in text or "<@GilbertAI>" in text:
+    if "<@Gilbert AI>" in text or "<@gilbert ai>" in text or "<@GilbertAI>" in text or "<@U08HPP8UD6Z>" in text:
         logger.info("Gilbert AI mention detected!")
         # Remove the bot mention from the text
-        clean_text = text.replace("<@Gilbert AI>", "").replace("<@gilbert ai>", "").replace("<@GilbertAI>", "").strip()
+        clean_text = text.replace("<@Gilbert AI>", "").replace("<@gilbert ai>", "").replace("<@GilbertAI>", "").replace("<@U08HPP8UD6Z>", "").strip()
         logger.info(f"Cleaned text: {clean_text}")
         
         # Get context from previous conversations
