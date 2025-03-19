@@ -73,10 +73,12 @@ def run_flask():
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
 # Initialize Slack app with signing secret
+logger.info("Initializing Slack app...")
 app = App(
     token=os.environ["SLACK_BOT_TOKEN"],
     signing_secret=os.environ["SLACK_SIGNING_SECRET"]
 )
+logger.info("Slack app initialized successfully")
 
 # Initialize Google Sheets
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
@@ -564,14 +566,16 @@ if __name__ == "__main__":
             try:
                 logger.info("Starting Slack bot...")
                 handler = SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"])
+                logger.info("Socket Mode handler created")
                 handler.start()
             except Exception as e:
-                logger.error(f"Slack bot error: {e}")
+                logger.error(f"Slack bot error: {e}", exc_info=True)
                 sys.exit(1)
 
         # Start Slack bot in a separate thread
         slack_thread = threading.Thread(target=run_slack_bot, daemon=True)
         slack_thread.start()
+        logger.info("Slack bot thread started")
         
         # Run Flask as the main process
         port = int(os.environ.get('PORT', 8080))
@@ -583,5 +587,5 @@ if __name__ == "__main__":
             use_reloader=False
         )
     except Exception as e:
-        logger.error(f"Application error: {e}")
+        logger.error(f"Application error: {e}", exc_info=True)
         sys.exit(1) 
