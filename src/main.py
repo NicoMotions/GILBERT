@@ -662,20 +662,26 @@ def test_asana_connection():
         }
 
 def test_dropbox_connection():
-    """Test the Dropbox connection and return basic account info."""
+    """Test Dropbox connection and return account info."""
     try:
         # Get account info
         account = dbx.users_get_current_account()
-        
-        # Get space usage
         space_usage = dbx.users_get_space_usage()
         
+        # Calculate storage usage
+        used = space_usage.used
+        allocated = space_usage.allocation.get_individual().allocated
+        usage_percent = (used / allocated) * 100 if allocated > 0 else 0
+        
         return {
+            "status": "success",
             "account_name": account.name.display_name,
             "email": account.email,
-            "used_space": space_usage.used,
-            "total_space": space_usage.allocation.get_individual().allocated,
-            "status": "success"
+            "usage": {
+                "used": used,
+                "allocated": allocated,
+                "percent": usage_percent
+            }
         }
     except Exception as e:
         logger.error(f"Error testing Dropbox connection: {e}")
