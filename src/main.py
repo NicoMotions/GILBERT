@@ -460,57 +460,118 @@ def setup_sheets():
         logger.error(f"Error setting up sheets: {e}")
         return False
 
+def test_asana_connection():
+    """Test the Asana connection and return basic workspace info."""
+    try:
+        # Get workspace info
+        workspace = asana_client.workspaces.get_workspace(asana_workspace_id)
+        
+        # Get projects count
+        projects = asana_client.projects.get_projects({'workspace': asana_workspace_id})
+        projects_count = len(projects)
+        
+        return {
+            "workspace_name": workspace["name"],
+            "projects_count": projects_count,
+            "status": "success"
+        }
+    except Exception as e:
+        logger.error(f"Error testing Asana connection: {e}")
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+def test_dropbox_connection():
+    """Test the Dropbox connection and return basic account info."""
+    try:
+        # Get account info
+        account = dbx.users_get_current_account()
+        
+        # Get space usage
+        space_usage = dbx.users_get_space_usage()
+        
+        return {
+            "account_name": account.name.display_name,
+            "email": account.email,
+            "used_space": space_usage.used,
+            "total_space": space_usage.allocation.get_individual().allocated,
+            "status": "success"
+        }
+    except Exception as e:
+        logger.error(f"Error testing Dropbox connection: {e}")
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
 # Slack event handlers
 @app.event("message")
-def handle_message_events(body, logger):
+def handle_message(event):
     """Handle incoming messages."""
-    event = body["event"]
-    text = event.get("text", "")
-    user = event.get("user")
-    channel = event.get("channel")
-    thread_ts = event.get("thread_ts")
-    
-    # Log the received message
-    logger.info(f"Received message: {text}")
-    
-    # Ignore bot messages
-    if "bot_id" in event:
-        logger.info("Ignoring bot message")
-        return
-    
-    # Log mention checks
-    logger.info(f"Checking for mentions in: {text}")
-    logger.info(f"Contains <@Gilbert AI>: {'<@Gilbert AI>' in text}")
-    logger.info(f"Contains <@gilbert ai>: {'<@gilbert ai>' in text}")
-    logger.info(f"Contains <@GilbertAI>: {'<@GilbertAI>' in text}")
-    logger.info(f"Contains <@U08HPP8UD6Z>: {'<@U08HPP8UD6Z>' in text}")
-    logger.info(f"Is thread reply: {bool(thread_ts)}")
-    
-    # Check if the message is directed at Gilbert AI
-    is_mention = "<@Gilbert AI>" in text or "<@gilbert ai>" in text or "<@GilbertAI>" in text or "<@U08HPP8UD6Z>" in text
-    
-    # If it's a thread reply, check if the parent message is from the bot
-    is_bot_thread = False
-    if thread_ts:
-        try:
-            # Get the parent message
-            result = app.client.conversations_history(
-                channel=channel,
-                latest=thread_ts,
-                limit=1,
-                inclusive=True
+    try:
+        # Get message text and user info
+        text = event.get("text", "")
+        user_id = event.get("user")
+        channel_id = event.get("channel")
+        thread_ts = event.get("thread_ts", event.get("ts"))
+        
+        # Check if this is a mention or thread reply
+        is_mention = any(mention in text.lower() for mention in ["<@gilbert ai>", "<@gilbertai>"])
+        is_thread_reply = event.get("thread_ts") is not None
+        
+        if not (is_mention or is_thread_reply):
+            return
+            
+        # Get user info
+        user_info = app.client.users_info(user=user_id)
+        user_name = user_info["user"]["real_name"]
+        
+        # Test Asana connection if requested
+        if "test asana" in text.lower():
+            test_result = test_asana_connection()
+            if test_result["status"] == "success":
+                response = f"✅ Asana connection successful!\nWorkspace: {test_result['workspace_name']}\nActive Projects: {test_result['projects_count']}"
+            else:
+                response = f"❌ Asana connection failed: {test_result['message']}"
+            app.client.chat_postMessage(
+                channel=channel_id,
+                text=response,
+                thread_ts=thread_ts
             )
-            if result["ok"] and result["messages"]:
-                parent_message = result["messages"][0]
-                is_bot_thread = parent_message.get("bot_id") is not None
-        except Exception as e:
-            logger.error(f"Error checking thread parent: {e}")
-    
-    if is_mention or is_bot_thread:
-        logger.info("Gilbert AI interaction detected!")
-        # Remove the bot mention from the text if present
-        clean_text = text.replace("<@Gilbert AI>", "").replace("<@gilbert ai>", "").replace("<@GilbertAI>", "").replace("<@U08HPP8UD6Z>", "").strip()
-        logger.info(f"Cleaned text: {clean_text}")
+            return
+            
+        # Test Dropbox connection if requested
+        if "test dropbox" in text.lower():
+            test_result = test_dropbox_connection()
+            if test_result["status"] == "success":
+                used_gb = round(test_result["used_space"] / (1024**3), 2)
+                total_gb = round(test_result["total_space"] / (1024**3), 2)
+                response = f"✅ Dropbox connection successful!\nAccount: {test_result['account_name']}\nEmail: {test_result['email']}\nStorage: {used_gb}GB used of {total_gb}GB"
+            else:
+                response = f"❌ Dropbox connection failed: {test_result['message']}"
+            app.client.chat_postMessage(
+                channel=channel_id,
+                text=response,
+                thread_ts=thread_ts
+            )
+            return
+        
+        # Get thread context if this is a reply
+        thread_context = ""
+        if is_thread_reply:
+            thread_messages = app.client.conversations_replies(channel=channel_id, ts=thread_ts)
+            if thread_messages["messages"]:
+                # Get the original message and Gilbert's response
+                original_message = thread_messages["messages"][0]["text"]
+                gilbert_response = None
+                for msg in thread_messages["messages"][1:]:
+                    if msg.get("bot_id") or msg.get("subtype") == "bot_message":
+                        gilbert_response = msg["text"]
+                        break
+                
+                if gilbert_response:
+                    thread_context = f"Original message: {original_message}\nGilbert's response: {gilbert_response}"
         
         # Get context from previous conversations
         context = ""
@@ -522,84 +583,33 @@ def handle_message_events(body, logger):
             logger.info(f"Context from previous conversations: {context}")
         
         # Get AI response
-        response = get_ai_response(clean_text, context)
+        response = get_ai_response(text, context)
         logger.info(f"AI response: {response}")
         
         # Extract and store important information
-        important_info = extract_important_info(clean_text)
+        important_info = extract_important_info(text)
         if important_info and SPREADSHEET_ID:  # Only try to store if we have a spreadsheet ID
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            values = [[timestamp, user, important_info]]
+            values = [[timestamp, user_id, important_info]]
             append_to_sheet("Memory", values)
             logger.info(f"Stored important info: {important_info}")
         
         # Send response in thread if it's a thread reply, otherwise as a new message
         if thread_ts:
             app.client.chat_postMessage(
-                channel=channel,
+                channel=channel_id,
                 text=response,
                 thread_ts=thread_ts
             )
         else:
             app.client.chat_postMessage(
-                channel=channel,
+                channel=channel_id,
                 text=response
             )
         logger.info("Response sent successfully")
     
-    # Handle specific commands for backward compatibility
-    elif "remember" in text:
-        try:
-            info = text.split("remember", 1)[1].strip()
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            values = [[timestamp, user, info]]
-            if append_to_sheet("Memory", values):
-                app.client.chat_postMessage(
-                    channel=channel,
-                    text="I've remembered that information! 📝"
-                )
-            else:
-                app.client.chat_postMessage(
-                    channel=channel,
-                    text="Sorry, I couldn't save that information. Please try again later."
-                )
-        except Exception as e:
-            logger.error(f"Error in remember command: {e}")
-            app.client.chat_postMessage(
-                channel=channel,
-                text="Sorry, I encountered an error while trying to remember that."
-            )
-    
-    elif "recall" in text:
-        try:
-            topic = text.split("recall", 1)[1].strip()
-            data = read_from_sheet("Memory", "A:C")
-            if data:
-                memories = [row for row in data if topic in row[2].lower()]
-                if memories:
-                    response = "Here's what I remember about that:\n"
-                    for memory in memories[-5:]:
-                        response += f"• {memory[2]} (from {memory[1]} on {memory[0]})\n"
-                    app.client.chat_postMessage(
-                        channel=channel,
-                        text=response
-                    )
-                else:
-                    app.client.chat_postMessage(
-                        channel=channel,
-                        text="I don't have any memories about that topic yet."
-                    )
-            else:
-                app.client.chat_postMessage(
-                    channel=channel,
-                    text="I don't have any memories stored yet."
-                )
-        except Exception as e:
-            logger.error(f"Error in recall command: {e}")
-            app.client.chat_postMessage(
-                channel=channel,
-                text="Sorry, I encountered an error while trying to recall that information."
-            )
+    except Exception as e:
+        logger.error(f"Error handling message: {e}")
 
 # Initialize the handler for Socket Mode
 if __name__ == "__main__":
