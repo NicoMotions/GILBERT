@@ -670,7 +670,7 @@ def test_dropbox_connection():
         
         # Calculate storage usage
         used = space_usage.used
-        allocated = space_usage.allocation.get_allocated()
+        allocated = space_usage.allocation.allocated
         usage_percent = (used / allocated) * 100 if allocated > 0 else 0
         
         return {
