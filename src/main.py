@@ -9,6 +9,9 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 import openai
+from flask import Flask
+import threading
+import sys
 
 # Load environment variables
 load_dotenv()
@@ -16,6 +19,22 @@ load_dotenv()
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Initialize Flask app for health check
+flask_app = Flask(__name__)
+
+@flask_app.route('/')
+def health_check():
+    return 'OK', 200
+
+def run_flask():
+    try:
+        port = int(os.environ.get('PORT', 8000))
+        logger.info(f"Starting Flask server on port {port}")
+        flask_app.run(host='0.0.0.0', port=port)
+    except Exception as e:
+        logger.error(f"Flask server error: {e}")
+        sys.exit(1)
 
 # Initialize OpenAI
 openai.api_key = os.environ.get("OPENAI_API_KEY")
@@ -229,5 +248,15 @@ def handle_message_events(body, logger):
 
 # Initialize the handler for Socket Mode
 if __name__ == "__main__":
-    handler = SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"])
-    handler.start() 
+    try:
+        # Start the Flask server in a separate thread
+        flask_thread = threading.Thread(target=run_flask, daemon=True)
+        flask_thread.start()
+        
+        # Start the Slack bot
+        logger.info("Starting Slack bot...")
+        handler = SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"])
+        handler.start()
+    except Exception as e:
+        logger.error(f"Application error: {e}")
+        sys.exit(1) 
