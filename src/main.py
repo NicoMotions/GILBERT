@@ -79,7 +79,7 @@ app = App(
 )
 
 # Initialize Asana client
-asana_client = asana.Client().access_token(os.environ.get("ASANA_ACCESS_TOKEN"))
+asana_client = asana.ApiClient(access_token=os.environ.get("ASANA_ACCESS_TOKEN"))
 asana_workspace_id = os.environ.get("ASANA_WORKSPACE_ID")
 
 # Initialize Dropbox client
