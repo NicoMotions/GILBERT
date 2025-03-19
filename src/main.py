@@ -412,8 +412,79 @@ def get_ai_response(prompt, context=None):
             NEVER make up or invent file names, folders, or links. Only show information that actually exists in Dropbox."""}
         ]
         
+        # First, test Dropbox connection
+        logger.info("Testing Dropbox connection...")
+        try:
+            test_result = test_dropbox_connection()
+            if test_result["status"] == "success":
+                logger.info(f"Dropbox connection successful: {test_result['account_name']}")
+            else:
+                logger.error(f"Dropbox connection failed: {test_result['message']}")
+                messages.append({
+                    "role": "system",
+                    "content": "Warning: Dropbox connection failed. I cannot access files at this time."
+                })
+        except Exception as e:
+            logger.error(f"Error testing Dropbox connection: {e}")
+            messages.append({
+                "role": "system",
+                "content": "Warning: Dropbox connection failed. I cannot access files at this time."
+            })
+        
         if context:
             messages.append({"role": "system", "content": f"Context from previous conversations: {context}"})
+        
+        # Check for Dropbox-related requests
+        dropbox_related = any(word in prompt.lower() for word in [
+            "file", "document", "link", "folder", "list", "show", "dropbox", 
+            "directory", "folder", "folders", "files", "documents", "contents",
+            "brand", "assets", "logo", "image", "material", "activity", "latest"
+        ])
+        
+        if dropbox_related:
+            logger.info("Processing Dropbox-related request...")
+            # Extract search terms from the prompt
+            search_terms = []
+            words = prompt.lower().split()
+            for i, word in enumerate(words):
+                if word in ["folder", "file", "document", "brand", "asset", "logo", "image", "material", "activity", "latest"]:
+                    if i > 0:
+                        search_terms.append(words[i-1])
+                    if i < len(words) - 1:
+                        search_terms.append(words[i+1])
+            
+            # If we have search terms, use them
+            if search_terms:
+                search_query = " ".join(search_terms)
+                logger.info(f"Searching Dropbox for: {search_query}")
+                dropbox_results = search_dropbox(search_query)
+                
+                if dropbox_results:
+                    logger.info(f"Found {len(dropbox_results)} items in Dropbox")
+                    # Format the results for the AI
+                    result_info = []
+                    for item in dropbox_results:
+                        modified_date = datetime.fromtimestamp(item["modified"]).strftime("%Y-%m-%d %H:%M")
+                        if item["is_folder"]:
+                            if item["shared_link"]:
+                                result_info.append(f"- 📁 [{item['name']}]({item['shared_link']}) (modified: {modified_date})")
+                            else:
+                                result_info.append(f"- 📁 {item['name']} (modified: {modified_date})")
+                        else:
+                            result_info.append(f"- 📄 [{item['name']}]({item['shared_link']}) (modified: {modified_date})")
+                    
+                    messages.append({
+                        "role": "system",
+                        "content": f"Found these items in Dropbox:\n" + "\n".join(result_info)
+                    })
+                else:
+                    logger.info("No items found in Dropbox")
+                    messages.append({
+                        "role": "system",
+                        "content": "I couldn't find any matching files or folders in Dropbox. Please check if the folder name is correct or try a different search term."
+                    })
+            else:
+                logger.info("No search terms found in prompt")
         
         # Check if the prompt is about a client or project
         client_info = None
@@ -452,53 +523,6 @@ def get_ai_response(prompt, context=None):
                     if word in ["project", "campaign", "work"] and i > 0:
                         unknown_project = words[i-1]
                         break
-        
-        # Check for Dropbox-related requests
-        dropbox_related = any(word in prompt.lower() for word in [
-            "file", "document", "link", "folder", "list", "show", "dropbox", 
-            "directory", "folder", "folders", "files", "documents", "contents",
-            "brand", "assets", "logo", "image", "material"
-        ])
-        
-        if dropbox_related:
-            # Extract search terms from the prompt
-            search_terms = []
-            words = prompt.lower().split()
-            for i, word in enumerate(words):
-                if word in ["folder", "file", "document", "brand", "asset", "logo", "image", "material"]:
-                    if i > 0:
-                        search_terms.append(words[i-1])
-                    if i < len(words) - 1:
-                        search_terms.append(words[i+1])
-            
-            # If we have search terms, use them
-            if search_terms:
-                search_query = " ".join(search_terms)
-                logger.info(f"Searching Dropbox for: {search_query}")
-                dropbox_results = search_dropbox(search_query)
-                
-                if dropbox_results:
-                    # Format the results for the AI
-                    result_info = []
-                    for item in dropbox_results:
-                        modified_date = datetime.fromtimestamp(item["modified"]).strftime("%Y-%m-%d %H:%M")
-                        if item["is_folder"]:
-                            if item["shared_link"]:
-                                result_info.append(f"- 📁 [{item['name']}]({item['shared_link']}) (modified: {modified_date})")
-                            else:
-                                result_info.append(f"- 📁 {item['name']} (modified: {modified_date})")
-                        else:
-                            result_info.append(f"- 📄 [{item['name']}]({item['shared_link']}) (modified: {modified_date})")
-                    
-                    messages.append({
-                        "role": "system",
-                        "content": f"Found these items in Dropbox:\n" + "\n".join(result_info)
-                    })
-                else:
-                    messages.append({
-                        "role": "system",
-                        "content": "I couldn't find any matching files or folders in Dropbox. Please check if the folder name is correct or try a different search term."
-                    })
         
         # Add relevant context to the prompt
         if client_info:
