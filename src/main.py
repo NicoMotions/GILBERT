@@ -1,5 +1,7 @@
 import os
 import logging
+import json
+import time
 from datetime import datetime
 from dotenv import load_dotenv
 from slack_bolt import App
@@ -12,6 +14,9 @@ from openai import OpenAI
 from flask import Flask
 import threading
 import sys
+import asana
+import dropbox
+import re
 
 # Load environment variables
 load_dotenv()
@@ -28,7 +33,7 @@ def health_check():
     """Health check endpoint."""
     try:
         # Check if required environment variables are present
-        required_vars = ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_SIGNING_SECRET", "OPENAI_API_KEY", "SPREADSHEET_ID"]
+        required_vars = ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_SIGNING_SECRET", "OPENAI_API_KEY", "SPREADSHEET_ID", "ASANA_ACCESS_TOKEN", "ASANA_WORKSPACE_ID", "DROPBOX_ACCESS_TOKEN"]
         missing_vars = [var for var in required_vars if not os.environ.get(var)]
         
         if missing_vars:
@@ -72,6 +77,13 @@ app = App(
     token=os.environ["SLACK_BOT_TOKEN"],
     signing_secret=os.environ["SLACK_SIGNING_SECRET"]
 )
+
+# Initialize Asana client
+asana_client = asana.Client.access_token(os.environ.get("ASANA_ACCESS_TOKEN"))
+asana_workspace_id = os.environ.get("ASANA_WORKSPACE_ID")
+
+# Initialize Dropbox client
+dbx = dropbox.Dropbox(os.environ.get("DROPBOX_ACCESS_TOKEN"))
 
 # Google Sheets setup
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
@@ -205,6 +217,67 @@ def get_project_status(project_name):
         logger.error(f"Error getting project status: {e}")
         return None
 
+def get_asana_projects():
+    """Get all active projects from Asana."""
+    try:
+        projects = asana_client.projects.get_projects({'workspace': asana_workspace_id})
+        return [
+            {
+                "name": project["name"],
+                "status": project.get("current_status", {}).get("status", "Unknown"),
+                "due_date": project.get("due_date"),
+                "team": [member["name"] for member in project.get("team", [])],
+                "tasks": get_project_tasks(project["gid"])
+            }
+            for project in projects
+        ]
+    except Exception as e:
+        logger.error(f"Error getting Asana projects: {e}")
+        return []
+
+def get_project_tasks(project_gid):
+    """Get tasks for a specific Asana project."""
+    try:
+        tasks = asana_client.tasks.get_tasks({'project': project_gid})
+        return [
+            {
+                "name": task["name"],
+                "status": task.get("completed", False),
+                "assignee": task.get("assignee", {}).get("name"),
+                "due_date": task.get("due_date")
+            }
+            for task in tasks
+        ]
+    except Exception as e:
+        logger.error(f"Error getting project tasks: {e}")
+        return []
+
+def search_dropbox(query):
+    """Search for files in Dropbox."""
+    try:
+        results = dbx.files_search_v2(query)
+        return [
+            {
+                "name": match.metadata.name,
+                "path": match.metadata.path_lower,
+                "type": match.metadata.get(".tag", "file"),
+                "modified": match.metadata.server_modified
+            }
+            for match in results.matches
+        ]
+    except Exception as e:
+        logger.error(f"Error searching Dropbox: {e}")
+        return []
+
+def get_dropbox_shared_link(path):
+    """Get a shared link for a Dropbox file."""
+    try:
+        shared_link = dbx.sharing_create_shared_link(path)
+        return shared_link.url
+    except Exception as e:
+        logger.error(f"Error creating shared link: {e}")
+        return None
+
 def get_ai_response(prompt, context=None):
     """Get response from OpenAI API with context."""
     try:
@@ -212,14 +285,23 @@ def get_ai_response(prompt, context=None):
             {"role": "system", "content": """You are Gilbert AI, a helpful and friendly assistant for a creative agency. 
             You help with client communication, project management, and creative tasks. 
             You have a conversational tone and remember important information from conversations.
-            You have access to client information, project statuses, and important documents.
+            You have access to:
+            - Client information and project statuses from the database
+            - Active projects and tasks from Asana
+            - Files and documents from Dropbox
             If you don't know something, say so and offer to help find the answer.
             When discussing clients or projects, provide relevant context from the available information.
-            If someone asks about a client or project that isn't in the database yet, explain that you don't have information about it yet and offer to help add it to the database."""}
+            If someone asks about a client or project that isn't in the database yet, explain that you don't have information about it yet and offer to help add it to the database.
+            When sharing Dropbox links, explain what the file is and why it might be relevant."""}
         ]
         
         if context:
             messages.append({"role": "system", "content": f"Context from previous conversations: {context}"})
+        
+        # Get Asana projects
+        asana_projects = get_asana_projects()
+        if asana_projects:
+            messages.append({"role": "system", "content": f"Current Asana projects: {json.dumps(asana_projects, indent=2)}"})
         
         # Check if the prompt is about a client or project
         client_info = None
@@ -258,6 +340,14 @@ def get_ai_response(prompt, context=None):
                     if word in ["project", "campaign", "work"] and i > 0:
                         unknown_project = words[i-1]
                         break
+        
+        # Check for Dropbox file requests
+        if "file" in prompt.lower() or "document" in prompt.lower():
+            # Extract potential file name or type
+            file_query = re.sub(r'[^\w\s]', '', prompt.lower())
+            dropbox_results = search_dropbox(file_query)
+            if dropbox_results:
+                messages.append({"role": "system", "content": f"Relevant Dropbox files: {json.dumps(dropbox_results, indent=2)}"})
         
         # Add relevant context to the prompt
         if client_info:
