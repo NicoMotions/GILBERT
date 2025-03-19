@@ -8,7 +8,7 @@ from google.oauth2.credentials import Credentials
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-import openai
+from openai import OpenAI
 from flask import Flask
 import threading
 import sys
@@ -36,8 +36,10 @@ def run_flask():
         logger.error(f"Flask server error: {e}")
         sys.exit(1)
 
-# Initialize OpenAI
-openai.api_key = os.environ.get("OPENAI_API_KEY")
+# Initialize OpenAI client
+openai = OpenAI(
+    api_key=os.getenv("OPENAI_API_KEY")
+)
 
 # Initialize Slack app with signing secret
 app = App(
