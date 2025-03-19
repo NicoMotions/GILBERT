@@ -25,13 +25,24 @@ flask_app = Flask(__name__)
 
 @flask_app.route('/')
 def health_check():
-    return 'OK', 200
+    """Health check endpoint."""
+    try:
+        return 'OK', 200
+    except Exception as e:
+        logger.error(f"Health check error: {e}")
+        return 'Error', 500
 
 def run_flask():
+    """Run Flask server."""
     try:
-        port = int(os.environ.get('PORT', 8000))
+        port = int(os.environ.get('PORT', 8080))
         logger.info(f"Starting Flask server on port {port}")
-        flask_app.run(host='0.0.0.0', port=port)
+        flask_app.run(
+            host='0.0.0.0',
+            port=port,
+            debug=False,
+            use_reloader=False
+        )
     except Exception as e:
         logger.error(f"Flask server error: {e}")
         sys.exit(1)
