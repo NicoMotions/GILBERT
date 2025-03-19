@@ -63,7 +63,8 @@ def run_flask():
 
 # Initialize OpenAI client
 openai = OpenAI(
-    api_key=os.getenv("OPENAI_API_KEY")
+    api_key=os.getenv("OPENAI_API_KEY"),
+    base_url="https://api.openai.com/v1"
 )
 
 # Initialize Slack app with signing secret
