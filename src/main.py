@@ -466,9 +466,30 @@ def get_ai_response(prompt, context=None):
         
         if dropbox_related:
             logger.info("Processing Dropbox-related request...")
-            # Extract search terms from the prompt
-            search_terms = []
-            words = prompt.lower().split()
+            
+            # Check for specific types of requests
+            if any(word in prompt.lower() for word in ["list", "show", "folders", "folder names"]):
+                # Use list_dropbox_folders for listing folders
+                folders = list_dropbox_folders(limit=20)
+                if folders:
+                    logger.info(f"Found {len(folders)} folders in Dropbox")
+                    result_info = []
+                    for folder in folders:
+                        modified_date = datetime.fromtimestamp(folder["modified"]).strftime("%Y-%m-%d %H:%M")
+                        indent = "  " * folder["depth"]
+                        result_info.append(f"{indent}- 📁 {folder['name']} (modified: {modified_date})")
+                    
+                    messages.append({
+                        "role": "system",
+                        "content": f"Found these folders in Dropbox:\n" + "\n".join(result_info)
+                    })
+                else:
+                    logger.info("No folders found in Dropbox")
+                    messages.append({
+                        "role": "system",
+                        "content": "I searched Dropbox but couldn't find any folders. This could mean either no folders exist, or there might be an issue with the permissions."
+                    })
+                return
             
             # Check for activity/latest related queries
             if any(word in prompt.lower() for word in ["activity", "latest", "recent"]):
@@ -477,6 +498,9 @@ def get_ai_response(prompt, context=None):
                 logger.info(f"Searching Dropbox for recent activity")
             else:
                 # For other queries, use the context words
+                search_terms = []
+                words = prompt.lower().split()
+                
                 for i, word in enumerate(words):
                     if word in ["folder", "file", "document", "brand", "asset", "logo", "image", "material"]:
                         if i > 0:
