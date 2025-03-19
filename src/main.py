@@ -112,7 +112,7 @@ def get_ai_response(prompt, context=None):
     """Get response from OpenAI API with context."""
     try:
         messages = [
-            {"role": "system", "content": "You are GILBERT, a helpful and friendly assistant for a creative agency. You help with client communication, project management, and creative tasks. You have a conversational tone and remember important information from conversations. If you don't know something, say so and offer to help find the answer."}
+            {"role": "system", "content": "You are Gilbert AI, a helpful and friendly assistant for a creative agency. You help with client communication, project management, and creative tasks. You have a conversational tone and remember important information from conversations. If you don't know something, say so and offer to help find the answer."}
         ]
         
         if context:
@@ -159,10 +159,10 @@ def handle_message_events(body, logger):
     if "bot_id" in event:
         return
     
-    # Check if the message is directed at GILBERT
-    if "<@GILBERT>" in text or "<@gilbert>" in text:
+    # Check if the message is directed at Gilbert AI
+    if "<@Gilbert AI>" in text or "<@gilbert ai>" in text or "<@GilbertAI>" in text:
         # Remove the bot mention from the text
-        clean_text = text.replace("<@GILBERT>", "").replace("<@gilbert>", "").strip()
+        clean_text = text.replace("<@Gilbert AI>", "").replace("<@gilbert ai>", "").replace("<@GilbertAI>", "").strip()
         
         # Get context from previous conversations
         context_data = read_from_sheet("Memory", "A:C")
