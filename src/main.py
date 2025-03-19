@@ -670,7 +670,7 @@ def test_dropbox_connection():
         
         # Calculate storage usage
         used = space_usage.used
-        allocated = space_usage.allocation.get_individual().allocated
+        allocated = space_usage.allocation.get_allocated()
         usage_percent = (used / allocated) * 100 if allocated > 0 else 0
         
         return {
@@ -732,9 +732,9 @@ def handle_message(event):
             logger.info("Testing Dropbox connection...")
             test_result = test_dropbox_connection()
             if test_result["status"] == "success":
-                used_gb = round(test_result["used_space"] / (1024**3), 2)
-                total_gb = round(test_result["total_space"] / (1024**3), 2)
-                response = f"✅ Dropbox connection successful!\nAccount: {test_result['account_name']}\nEmail: {test_result['email']}\nStorage: {used_gb}GB used of {total_gb}GB"
+                used_gb = round(test_result["usage"]["used"] / (1024**3), 2)
+                total_gb = round(test_result["usage"]["allocated"] / (1024**3), 2)
+                response = f"✅ Dropbox connection successful!\nAccount: {test_result['account_name']}\nEmail: {test_result['email']}\nStorage: {used_gb}GB used of {total_gb}GB ({test_result['usage']['percent']:.1f}%)"
             else:
                 response = f"❌ Dropbox connection failed: {test_result['message']}"
             logger.info(f"Sending response: {response}")
