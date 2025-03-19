@@ -223,31 +223,62 @@ def get_project_status(project_name):
         logger.error(f"Error getting project status: {e}")
         return None
 
+def get_dropbox_shared_link(path):
+    """Get a shared link for a Dropbox file."""
+    try:
+        # First check if a shared link already exists
+        try:
+            shared_links = dbx.sharing_list_shared_links(path=path)
+            if shared_links.links:
+                # If a link exists, return it
+                return shared_links.links[0].url
+        except Exception as e:
+            logger.error(f"Error checking existing shared links: {e}")
+        
+        # If no link exists, create a new one
+        shared_link = dbx.sharing_create_shared_link(
+            path=path,
+            short_url=True,  # Create a shorter URL
+            pending_upload=None,
+            password=None,
+            expires=None,
+            team_member_id=None,
+            remove_expiration=None
+        )
+        
+        # Convert the URL to a direct download link
+        url = shared_link.url
+        url = url.replace('www.dropbox.com', 'dl.dropboxusercontent.com')
+        url = url.replace('?dl=0', '?dl=1')
+        
+        return url
+    except Exception as e:
+        logger.error(f"Error creating shared link: {e}")
+        return None
+
 def search_dropbox(query):
     """Search for files in Dropbox."""
     try:
         results = dbx.files_search_v2(query)
-        return [
-            {
-                "name": match.metadata.name,
-                "path": match.metadata.path_lower,
-                "type": match.metadata.get(".tag", "file"),
-                "modified": match.metadata.server_modified
-            }
-            for match in results.matches
-        ]
+        files = []
+        for match in results.matches:
+            try:
+                # Get shared link for each file
+                shared_link = get_dropbox_shared_link(match.metadata.path_lower)
+                files.append({
+                    "name": match.metadata.name,
+                    "path": match.metadata.path_lower,
+                    "type": match.metadata.get(".tag", "file"),
+                    "modified": match.metadata.server_modified,
+                    "shared_link": shared_link
+                })
+            except Exception as e:
+                logger.error(f"Error processing file {match.metadata.name}: {e}")
+                continue
+        return files
     except Exception as e:
         logger.error(f"Error searching Dropbox: {e}")
         return []
-
-def get_dropbox_shared_link(path):
-    """Get a shared link for a Dropbox file."""
-    try:
-        shared_link = dbx.sharing_create_shared_link(path)
-        return shared_link.url
-    except Exception as e:
-        logger.error(f"Error creating shared link: {e}")
-        return None
 
 def get_ai_response(prompt, context=None):
     """Get response from OpenAI API with context."""
