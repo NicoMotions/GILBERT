@@ -79,7 +79,7 @@ app = App(
 )
 
 # Initialize Asana client
-asana_client = asana.ApiClient(access_token=os.environ.get("ASANA_ACCESS_TOKEN"))
+asana_client = asana.Client().access_token(os.environ.get("ASANA_ACCESS_TOKEN"))
 asana_workspace_id = os.environ.get("ASANA_WORKSPACE_ID")
 
 # Initialize Dropbox client
@@ -220,14 +220,14 @@ def get_project_status(project_name):
 def get_asana_projects():
     """Get all active projects from Asana."""
     try:
-        projects = asana_client.projects.get_projects({'workspace': asana_workspace_id})
+        projects = asana_client.projects.get_projects_for_workspace(asana_workspace_id)
         return [
             {
-                "name": project["name"],
-                "status": project.get("current_status", {}).get("status", "Unknown"),
-                "due_date": project.get("due_date"),
-                "team": [member["name"] for member in project.get("team", [])],
-                "tasks": get_project_tasks(project["gid"])
+                "name": project.name,
+                "status": project.current_status.status if project.current_status else "Unknown",
+                "due_date": project.due_date,
+                "team": [member.name for member in project.team],
+                "tasks": get_project_tasks(project.gid)
             }
             for project in projects
         ]
@@ -238,13 +238,13 @@ def get_asana_projects():
 def get_project_tasks(project_gid):
     """Get tasks for a specific Asana project."""
     try:
-        tasks = asana_client.tasks.get_tasks({'project': project_gid})
+        tasks = asana_client.tasks.get_tasks_for_project(project_gid)
         return [
             {
-                "name": task["name"],
-                "status": task.get("completed", False),
-                "assignee": task.get("assignee", {}).get("name"),
-                "due_date": task.get("due_date")
+                "name": task.name,
+                "status": task.completed,
+                "assignee": task.assignee.name if task.assignee else None,
+                "due_date": task.due_date
             }
             for task in tasks
         ]
@@ -467,11 +467,11 @@ def test_asana_connection():
         workspace = asana_client.workspaces.get_workspace(asana_workspace_id)
         
         # Get projects count
-        projects = asana_client.projects.get_projects({'workspace': asana_workspace_id})
-        projects_count = len(projects)
+        projects = asana_client.projects.get_projects_for_workspace(asana_workspace_id)
+        projects_count = len(list(projects))
         
         return {
-            "workspace_name": workspace["name"],
+            "workspace_name": workspace.name,
             "projects_count": projects_count,
             "status": "success"
         }
