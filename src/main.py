@@ -493,10 +493,12 @@ def handle_message(event):
         logger.info(f"Processing message: text='{text}', user_id='{user_id}', channel_id='{channel_id}'")
         
         # Check if this is a mention or thread reply
-        is_mention = f"<@{BOT_USER_ID}>" in text.lower()
+        # Look for the bot's user ID in the message, preserving case
+        is_mention = f"<@{BOT_USER_ID}>" in text
         is_thread_reply = event.get("thread_ts") is not None
         
         logger.info(f"Message type: mention={is_mention}, thread_reply={is_thread_reply}")
+        logger.info(f"Looking for mention: <@{BOT_USER_ID}>")
         
         if not (is_mention or is_thread_reply):
             logger.info("Ignoring message - not a mention or thread reply")
