@@ -260,8 +260,21 @@ def get_dropbox_shared_link(path):
 def search_dropbox(query):
     """Search for files in Dropbox."""
     try:
+        # First try to get recent files
+        recent_files = []
+        try:
+            recent = dbx.files_list_folder_get_latest_cursor(path="")
+            while recent.has_more:
+                recent_files.extend(recent.entries)
+                recent = dbx.files_list_folder_continue(cursor=recent.cursor)
+        except Exception as e:
+            logger.error(f"Error getting recent files: {e}")
+
+        # Then perform the search
         results = dbx.files_search_v2(query)
         files = []
+        
+        # Process search results
         for match in results.matches:
             try:
                 # Get shared link for each file
@@ -272,7 +285,8 @@ def search_dropbox(query):
                         "path": match.metadata.path_lower,
                         "type": match.metadata.get(".tag", "file"),
                         "modified": match.metadata.server_modified,
-                        "shared_link": shared_link
+                        "shared_link": shared_link,
+                        "is_recent": any(rf.path_lower == match.metadata.path_lower for rf in recent_files)
                     })
                     logger.info(f"Successfully created shared link for {match.metadata.name}")
                 else:
@@ -280,6 +294,27 @@ def search_dropbox(query):
             except Exception as e:
                 logger.error(f"Error processing file {match.metadata.name}: {e}")
                 continue
+
+        # If no search results but we have recent files, check if any match the query
+        if not files and recent_files:
+            query_terms = query.lower().split()
+            for file in recent_files:
+                if any(term in file.name.lower() for term in query_terms):
+                    try:
+                        shared_link = get_dropbox_shared_link(file.path_lower)
+                        if shared_link:
+                            files.append({
+                                "name": file.name,
+                                "path": file.path_lower,
+                                "type": file.get(".tag", "file"),
+                                "modified": file.server_modified,
+                                "shared_link": shared_link,
+                                "is_recent": True
+                            })
+                    except Exception as e:
+                        logger.error(f"Error processing recent file {file.name}: {e}")
+                        continue
+
         return files
     except Exception as e:
         logger.error(f"Error searching Dropbox: {e}")
@@ -298,7 +333,8 @@ def get_ai_response(prompt, context=None):
             If you don't know something, say so and offer to help find the answer.
             When discussing clients or projects, provide relevant context from the available information.
             If someone asks about a client or project that isn't in the database yet, explain that you don't have information about it yet and offer to help add it to the database.
-            When sharing Dropbox links, explain what the file is and why it might be relevant."""}
+            When sharing Dropbox links, explain what the file is and why it might be relevant.
+            If you find files in Dropbox, always share the links and explain what each file is."""}
         ]
         
         if context:
@@ -343,12 +379,23 @@ def get_ai_response(prompt, context=None):
                         break
         
         # Check for Dropbox file requests
-        if "file" in prompt.lower() or "document" in prompt.lower():
+        if "file" in prompt.lower() or "document" in prompt.lower() or "link" in prompt.lower():
             # Extract potential file name or type
             file_query = re.sub(r'[^\w\s]', '', prompt.lower())
             dropbox_results = search_dropbox(file_query)
             if dropbox_results:
-                messages.append({"role": "system", "content": f"Relevant Dropbox files: {json.dumps(dropbox_results, indent=2)}"})
+                # Format the file information for the AI
+                file_info = []
+                for file in dropbox_results:
+                    modified_date = datetime.fromtimestamp(file["modified"]).strftime("%Y-%m-%d %H:%M")
+                    file_info.append(f"- {file['name']} (modified: {modified_date})")
+                    if file.get("is_recent"):
+                        file_info[-1] += " [Recent]"
+                
+                messages.append({
+                    "role": "system", 
+                    "content": f"Found these files in Dropbox:\n" + "\n".join(file_info)
+                })
         
         # Add relevant context to the prompt
         if client_info:
