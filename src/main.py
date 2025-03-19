@@ -27,6 +27,7 @@ flask_app = Flask(__name__)
 def health_check():
     """Health check endpoint."""
     try:
+        # Basic health check - just return OK
         return 'OK', 200
     except Exception as e:
         logger.error(f"Health check error: {e}")
@@ -60,35 +61,65 @@ app = App(
 
 # Google Sheets setup
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
-SPREADSHEET_ID = os.environ["SPREADSHEET_ID"]
+SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID")
 
 def get_google_sheets_service():
     """Initialize and return Google Sheets service."""
     try:
         # For Railway, we'll use the service account JSON directly from environment
-        service_account_info = eval(os.environ.get("GOOGLE_SERVICE_ACCOUNT", "{}"))
-        if service_account_info:
-            creds = service_account.Credentials.from_service_account_info(
-                service_account_info,
-                scopes=SCOPES
-            )
+        service_account_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT")
+        if service_account_json:
+            try:
+                import json
+                service_account_info = json.loads(service_account_json)
+                creds = service_account.Credentials.from_service_account_info(
+                    service_account_info,
+                    scopes=SCOPES
+                )
+            except json.JSONDecodeError as e:
+                logger.error(f"Error parsing service account JSON: {e}")
+                return None
         else:
             # Fallback to file-based credentials
+            credentials_path = os.environ.get("GOOGLE_SHEETS_CREDENTIALS_PATH")
+            if not credentials_path:
+                logger.error("No Google Sheets credentials found in environment")
+                return None
+                
+            if not os.path.exists(credentials_path):
+                logger.error(f"Credentials file not found at: {credentials_path}")
+                return None
+                
             creds = service_account.Credentials.from_service_account_file(
-                os.environ["GOOGLE_SHEETS_CREDENTIALS_PATH"],
+                credentials_path,
                 scopes=SCOPES
             )
+            
         service = build('sheets', 'v4', credentials=creds)
-        return service
+        
+        # Test the connection
+        try:
+            service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute()
+            logger.info("Successfully connected to Google Sheets")
+            return service
+        except HttpError as e:
+            logger.error(f"Error testing Google Sheets connection: {e}")
+            return None
+            
     except Exception as e:
         logger.error(f"Error initializing Google Sheets service: {e}")
         return None
 
 def append_to_sheet(sheet_name, values):
     """Append data to specified Google Sheet."""
+    if not SPREADSHEET_ID:
+        logger.error("No spreadsheet ID configured")
+        return False
+        
     try:
         service = get_google_sheets_service()
         if not service:
+            logger.error("Could not initialize Google Sheets service")
             return False
         
         body = {
@@ -100,6 +131,7 @@ def append_to_sheet(sheet_name, values):
             valueInputOption='RAW',
             body=body
         ).execute()
+        logger.info(f"Successfully appended data to sheet: {sheet_name}")
         return True
     except HttpError as e:
         logger.error(f"Error appending to sheet: {e}")
@@ -107,16 +139,23 @@ def append_to_sheet(sheet_name, values):
 
 def read_from_sheet(sheet_name, range_name):
     """Read data from specified Google Sheet."""
+    if not SPREADSHEET_ID:
+        logger.error("No spreadsheet ID configured")
+        return None
+        
     try:
         service = get_google_sheets_service()
         if not service:
+            logger.error("Could not initialize Google Sheets service")
             return None
         
         result = service.spreadsheets().values().get(
             spreadsheetId=SPREADSHEET_ID,
             range=f'{sheet_name}!{range_name}'
         ).execute()
-        return result.get('values', [])
+        values = result.get('values', [])
+        logger.info(f"Successfully read {len(values)} rows from sheet: {sheet_name}")
+        return values
     except HttpError as e:
         logger.error(f"Error reading from sheet: {e}")
         return None
@@ -191,8 +230,8 @@ def handle_message_events(body, logger):
         logger.info(f"Cleaned text: {clean_text}")
         
         # Get context from previous conversations
-        context_data = read_from_sheet("Memory", "A:C")
         context = ""
+        context_data = read_from_sheet("Memory", "A:C")
         if context_data:
             # Get last 5 relevant memories
             relevant_memories = [row[2] for row in context_data[-5:]]
@@ -205,7 +244,7 @@ def handle_message_events(body, logger):
         
         # Extract and store important information
         important_info = extract_important_info(clean_text)
-        if important_info:
+        if important_info and SPREADSHEET_ID:  # Only try to store if we have a spreadsheet ID
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             values = [[timestamp, user, important_info]]
             append_to_sheet("Memory", values)
