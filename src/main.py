@@ -208,6 +208,7 @@ def handle_message_events(body, logger):
     text = event.get("text", "")
     user = event.get("user")
     channel = event.get("channel")
+    thread_ts = event.get("thread_ts")
     
     # Log the received message
     logger.info(f"Received message: {text}")
@@ -223,11 +224,31 @@ def handle_message_events(body, logger):
     logger.info(f"Contains <@gilbert ai>: {'<@gilbert ai>' in text}")
     logger.info(f"Contains <@GilbertAI>: {'<@GilbertAI>' in text}")
     logger.info(f"Contains <@U08HPP8UD6Z>: {'<@U08HPP8UD6Z>' in text}")
+    logger.info(f"Is thread reply: {bool(thread_ts)}")
     
     # Check if the message is directed at Gilbert AI
-    if "<@Gilbert AI>" in text or "<@gilbert ai>" in text or "<@GilbertAI>" in text or "<@U08HPP8UD6Z>" in text:
-        logger.info("Gilbert AI mention detected!")
-        # Remove the bot mention from the text
+    is_mention = "<@Gilbert AI>" in text or "<@gilbert ai>" in text or "<@GilbertAI>" in text or "<@U08HPP8UD6Z>" in text
+    
+    # If it's a thread reply, check if the parent message is from the bot
+    is_bot_thread = False
+    if thread_ts:
+        try:
+            # Get the parent message
+            result = app.client.conversations_history(
+                channel=channel,
+                latest=thread_ts,
+                limit=1,
+                inclusive=True
+            )
+            if result["ok"] and result["messages"]:
+                parent_message = result["messages"][0]
+                is_bot_thread = parent_message.get("bot_id") is not None
+        except Exception as e:
+            logger.error(f"Error checking thread parent: {e}")
+    
+    if is_mention or is_bot_thread:
+        logger.info("Gilbert AI interaction detected!")
+        # Remove the bot mention from the text if present
         clean_text = text.replace("<@Gilbert AI>", "").replace("<@gilbert ai>", "").replace("<@GilbertAI>", "").replace("<@U08HPP8UD6Z>", "").strip()
         logger.info(f"Cleaned text: {clean_text}")
         
@@ -252,11 +273,18 @@ def handle_message_events(body, logger):
             append_to_sheet("Memory", values)
             logger.info(f"Stored important info: {important_info}")
         
-        # Send response
-        app.client.chat_postMessage(
-            channel=channel,
-            text=response
-        )
+        # Send response in thread if it's a thread reply, otherwise as a new message
+        if thread_ts:
+            app.client.chat_postMessage(
+                channel=channel,
+                text=response,
+                thread_ts=thread_ts
+            )
+        else:
+            app.client.chat_postMessage(
+                channel=channel,
+                text=response
+            )
         logger.info("Response sent successfully")
     
     # Handle specific commands for backward compatibility
