@@ -14,7 +14,6 @@ from openai import OpenAI
 from flask import Flask, jsonify
 import threading
 import sys
-import asana
 import dropbox
 import re
 import openai
@@ -37,7 +36,7 @@ def health_check():
     """Health check endpoint."""
     try:
         # Check if required environment variables are present
-        required_vars = ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_SIGNING_SECRET", "OPENAI_API_KEY", "SPREADSHEET_ID", "ASANA_ACCESS_TOKEN", "ASANA_WORKSPACE_ID", "DROPBOX_ACCESS_TOKEN"]
+        required_vars = ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_SIGNING_SECRET", "OPENAI_API_KEY", "SPREADSHEET_ID", "DROPBOX_ACCESS_TOKEN"]
         missing_vars = [var for var in required_vars if not os.environ.get(var)]
         
         if missing_vars:
@@ -206,41 +205,6 @@ def get_project_status(project_name):
         logger.error(f"Error getting project status: {e}")
         return None
 
-def get_asana_projects():
-    """Get all active projects from Asana."""
-    try:
-        projects = asana_client.projects.get_projects_for_workspace(asana_workspace_id)
-        return [
-            {
-                "name": project["name"],
-                "status": project.get("current_status", {}).get("status", "Unknown"),
-                "due_date": project.get("due_date"),
-                "team": [member["name"] for member in project.get("team", [])],
-                "tasks": get_project_tasks(project["gid"])
-            }
-            for project in projects
-        ]
-    except Exception as e:
-        logger.error(f"Error getting Asana projects: {e}")
-        return []
-
-def get_project_tasks(project_gid):
-    """Get tasks for a specific Asana project."""
-    try:
-        tasks = asana_client.tasks.get_tasks_for_project(project_gid)
-        return [
-            {
-                "name": task["name"],
-                "status": task.get("completed", False),
-                "assignee": task.get("assignee", {}).get("name"),
-                "due_date": task.get("due_date")
-            }
-            for task in tasks
-        ]
-    except Exception as e:
-        logger.error(f"Error getting project tasks: {e}")
-        return []
-
 def search_dropbox(query):
     """Search for files in Dropbox."""
     try:
@@ -276,7 +240,6 @@ def get_ai_response(prompt, context=None):
             You have a conversational tone and remember important information from conversations.
             You have access to:
             - Client information and project statuses from the database
-            - Active projects and tasks from Asana
             - Files and documents from Dropbox
             If you don't know something, say so and offer to help find the answer.
             When discussing clients or projects, provide relevant context from the available information.
@@ -286,11 +249,6 @@ def get_ai_response(prompt, context=None):
         
         if context:
             messages.append({"role": "system", "content": f"Context from previous conversations: {context}"})
-        
-        # Get Asana projects
-        asana_projects = get_asana_projects()
-        if asana_projects:
-            messages.append({"role": "system", "content": f"Current Asana projects: {json.dumps(asana_projects, indent=2)}"})
         
         # Check if the prompt is about a client or project
         client_info = None
@@ -518,20 +476,6 @@ def handle_message(event):
         user_info = app.client.users_info(user=user_id)
         user_name = user_info["user"]["real_name"]
         
-        # Test Asana connection if requested
-        if "test asana" in text.lower():
-            test_result = test_asana_connection()
-            if test_result["status"] == "success":
-                response = f"✅ Asana connection successful!\nWorkspace: {test_result['workspace_name']}\nActive Projects: {test_result['projects_count']}"
-            else:
-                response = f"❌ Asana connection failed: {test_result['message']}"
-            app.client.chat_postMessage(
-                channel=channel_id,
-                text=response,
-                thread_ts=thread_ts
-            )
-            return
-            
         # Test Dropbox connection if requested
         if "test dropbox" in text.lower():
             test_result = test_dropbox_connection()
