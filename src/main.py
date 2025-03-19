@@ -333,8 +333,9 @@ def get_ai_response(prompt, context=None):
             If you don't know something, say so and offer to help find the answer.
             When discussing clients or projects, provide relevant context from the available information.
             If someone asks about a client or project that isn't in the database yet, explain that you don't have information about it yet and offer to help add it to the database.
-            When sharing Dropbox links, explain what the file is and why it might be relevant.
-            If you find files in Dropbox, always share the links and explain what each file is."""}
+            When sharing Dropbox links, ALWAYS include the actual file links in your response. Format them like this:
+            - [File Name](file_link) (modified: date)
+            If you find files in Dropbox, you MUST share the links and explain what each file is."""}
         ]
         
         if context:
@@ -388,7 +389,7 @@ def get_ai_response(prompt, context=None):
                 file_info = []
                 for file in dropbox_results:
                     modified_date = datetime.fromtimestamp(file["modified"]).strftime("%Y-%m-%d %H:%M")
-                    file_info.append(f"- {file['name']} (modified: {modified_date})")
+                    file_info.append(f"- [{file['name']}]({file['shared_link']}) (modified: {modified_date})")
                     if file.get("is_recent"):
                         file_info[-1] += " [Recent]"
                 
