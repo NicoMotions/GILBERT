@@ -320,6 +320,33 @@ def search_dropbox(query):
         logger.error(f"Error searching Dropbox: {e}")
         return []
 
+def list_dropbox_folders(limit=20):
+    """List folders in Dropbox."""
+    try:
+        folders = []
+        result = dbx.files_list_folder(path="")
+        
+        while result.entries and len(folders) < limit:
+            for entry in result.entries:
+                if entry.get(".tag") == "folder":
+                    folders.append({
+                        "name": entry.name,
+                        "path": entry.path_lower,
+                        "modified": entry.server_modified
+                    })
+                    if len(folders) >= limit:
+                        break
+            
+            if result.has_more and len(folders) < limit:
+                result = dbx.files_list_folder_continue(cursor=result.cursor)
+            else:
+                break
+                
+        return folders
+    except Exception as e:
+        logger.error(f"Error listing Dropbox folders: {e}")
+        return []
+
 def get_ai_response(prompt, context=None):
     """Get response from OpenAI API with context."""
     try:
@@ -335,7 +362,8 @@ def get_ai_response(prompt, context=None):
             If someone asks about a client or project that isn't in the database yet, explain that you don't have information about it yet and offer to help add it to the database.
             When sharing Dropbox links, ALWAYS include the actual file links in your response. Format them like this:
             - [File Name](file_link) (modified: date)
-            If you find files in Dropbox, you MUST share the links and explain what each file is."""}
+            If you find files in Dropbox, you MUST share the links and explain what each file is.
+            When listing folders, show the folder names and their last modified dates."""}
         ]
         
         if context:
@@ -379,24 +407,45 @@ def get_ai_response(prompt, context=None):
                         unknown_project = words[i-1]
                         break
         
-        # Check for Dropbox file requests
-        if "file" in prompt.lower() or "document" in prompt.lower() or "link" in prompt.lower():
-            # Extract potential file name or type
-            file_query = re.sub(r'[^\w\s]', '', prompt.lower())
-            dropbox_results = search_dropbox(file_query)
-            if dropbox_results:
-                # Format the file information for the AI
-                file_info = []
-                for file in dropbox_results:
-                    modified_date = datetime.fromtimestamp(file["modified"]).strftime("%Y-%m-%d %H:%M")
-                    file_info.append(f"- [{file['name']}]({file['shared_link']}) (modified: {modified_date})")
-                    if file.get("is_recent"):
-                        file_info[-1] += " [Recent]"
-                
-                messages.append({
-                    "role": "system", 
-                    "content": f"Found these files in Dropbox:\n" + "\n".join(file_info)
-                })
+        # Check for Dropbox-related requests
+        dropbox_related = any(word in prompt.lower() for word in [
+            "file", "document", "link", "folder", "list", "show", "dropbox", 
+            "directory", "folder", "folders", "files", "documents"
+        ])
+        
+        if dropbox_related:
+            # If specifically asking for folders
+            if any(word in prompt.lower() for word in ["folder", "folders", "list", "show"]):
+                folders = list_dropbox_folders()
+                if folders:
+                    folder_info = []
+                    for folder in folders:
+                        modified_date = datetime.fromtimestamp(folder["modified"]).strftime("%Y-%m-%d %H:%M")
+                        folder_info.append(f"- {folder['name']} (modified: {modified_date})")
+                    
+                    messages.append({
+                        "role": "system",
+                        "content": f"Found these folders in Dropbox:\n" + "\n".join(folder_info)
+                    })
+            
+            # If asking for files
+            else:
+                # Extract potential file name or type
+                file_query = re.sub(r'[^\w\s]', '', prompt.lower())
+                dropbox_results = search_dropbox(file_query)
+                if dropbox_results:
+                    # Format the file information for the AI
+                    file_info = []
+                    for file in dropbox_results:
+                        modified_date = datetime.fromtimestamp(file["modified"]).strftime("%Y-%m-%d %H:%M")
+                        file_info.append(f"- [{file['name']}]({file['shared_link']}) (modified: {modified_date})")
+                        if file.get("is_recent"):
+                            file_info[-1] += " [Recent]"
+                    
+                    messages.append({
+                        "role": "system", 
+                        "content": f"Found these files in Dropbox:\n" + "\n".join(file_info)
+                    })
         
         # Add relevant context to the prompt
         if client_info:
