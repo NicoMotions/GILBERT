@@ -80,6 +80,11 @@ app = App(
 )
 logger.info("Slack app initialized successfully")
 
+# Get bot's own ID
+bot_info = app.client.auth_test()
+BOT_ID = bot_info["bot_id"]
+logger.info(f"Bot ID: {BOT_ID}")
+
 # Initialize Google Sheets
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID")
@@ -488,7 +493,7 @@ def handle_message(event):
         logger.info(f"Processing message: text='{text}', user_id='{user_id}', channel_id='{channel_id}'")
         
         # Check if this is a mention or thread reply
-        is_mention = any(mention in text.lower() for mention in ["<@gilbert ai>", "<@gilbertai>"])
+        is_mention = f"<@{BOT_ID}>" in text.lower()
         is_thread_reply = event.get("thread_ts") is not None
         
         logger.info(f"Message type: mention={is_mention}, thread_reply={is_thread_reply}")
